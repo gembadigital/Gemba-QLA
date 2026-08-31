@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Building2, Users, TrendingUp, BarChart3, Search, Filter, 
-  Plus, Copy, FolderArchive, FolderOpen, Calendar, MapPin, 
+  Plus, Copy, FolderArchive, FolderOpen, Trash2, Calendar, MapPin, 
   Briefcase, CheckCircle2, ChevronRight, Sparkles, RefreshCw, X,
   Cloud, CloudOff, Database, Settings
 } from 'lucide-react';
@@ -85,6 +85,15 @@ export default function Dashboard({ onOpenCompany, onNewCompanyCreated }: Dashbo
         refreshData();
         alert('Firma tüm operasyonel verileri, puanları ve saha gözlemleriyle birlikte başarıyla kopyalandı.');
       }
+    }
+  };
+
+  // Delete company completely
+  const handleDeleteCompany = (e: React.MouseEvent, companyId: string, name: string) => {
+    e.stopPropagation();
+    if (confirm(`"${name}" firmasını ve firmaya ait TÜM analiz verilerini kalıcı olarak silmek istediğinizden emin misiniz? Bu işlem geri alınamaz!`)) {
+      GembaDB.deleteCompany(companyId);
+      refreshData();
     }
   };
 
@@ -558,6 +567,15 @@ export default function Dashboard({ onOpenCompany, onNewCompanyCreated }: Dashbo
                               <FolderArchive className="w-3.5 h-3.5" />
                             </button>
                           )}
+
+                          {/* Sil */}
+                          <button
+                            onClick={(e) => handleDeleteCompany(e, comp.companyId, comp.companyName)}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-800 rounded-lg transition-all border border-rose-200/60 cursor-pointer"
+                            title="Firmayı ve Tüm Verilerini Kalıcı Olarak Sil"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>

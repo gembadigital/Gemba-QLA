@@ -1,7 +1,7 @@
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { registerCostStructureRoute } from "../lib/costStructure";
+import { registerCostStructureRoute } from "../lib/costStructure.js";
 
 dotenv.config();
 

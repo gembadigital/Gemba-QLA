@@ -501,8 +501,8 @@ Yalın dönüşüm araçlarının (SMED, 5S, TPM Otonom Bakım ve Poka-Yoke) ent
         categories.forEach((cat, idx) => {
           // Average some scores mapping
           const start = idx * 2 + 1;
-          const s1 = Number(scores[start]) || 0;
-          const s2 = Number(scores[start + 1]) || 0;
+          const s1 = Math.max(0, Number(scores[start]) || 0);
+          const s2 = Math.max(0, Number(scores[start + 1]) || 0);
           aggScores[idx] = Math.round((s1 + s2) / 2);
         });
       }
@@ -690,12 +690,12 @@ Yalın dönüşüm araçlarının (SMED, 5S, TPM Otonom Bakım ve Poka-Yoke) ent
 
       // Render savings table
       const cols: TableColumn[] = [
-        { header: 'Kazanım / İyileştirme Türü', width: 65 },
+        { header: 'Kazanım / İyileştirme Türü', width: 60 },
         { header: 'Mevcut Maliyet (₺)', width: 30, align: 'right' },
         { header: 'Gelecek Maliyet (₺)', width: 30, align: 'right' },
         { header: 'Yıllık Tasarruf (₺)', width: 32, align: 'right' },
         { header: 'ROI (x)', width: 13, align: 'center' },
-        { header: 'CO₂ (t)', width: 10, align: 'center' }
+        { header: 'Geri Ödeme (Ay)', width: 15, align: 'center' }
       ];
 
       const rows = savingsList.map(s => [
@@ -703,16 +703,17 @@ Yalın dönüşüm araçlarının (SMED, 5S, TPM Otonom Bakım ve Poka-Yoke) ent
         Math.round(s.currentCost).toLocaleString('tr-TR'),
         Math.round(s.futureCost).toLocaleString('tr-TR'),
         Math.round(s.annualSaving).toLocaleString('tr-TR'),
-        s.roi ? `${s.roi}x` : '6.5x',
-        s.co2Reduction || '0'
+        s.roi ? `${s.roi}x` : '-',
+        s.payback ? String(s.payback) : '-'
       ]);
 
       // Calculate totals
       const totalCurrent = savingsList.reduce((sum, s) => sum + (s.currentCost || 0), 0);
       const totalFuture = savingsList.reduce((sum, s) => sum + (s.futureCost || 0), 0);
       const totalSavingVal = savingsList.reduce((sum, s) => sum + (s.annualSaving || 0), 0);
-      const avgRoi = savingsList.length > 0 ? (savingsList.reduce((sum, s) => sum + (s.roi || 0), 0) / savingsList.length).toFixed(1) : '6.5';
-      const totalCo2 = savingsList.reduce((sum, s) => sum + (s.co2Reduction || 0), 0);
+      // Satırlar aynı paketin kategorileridir: ROI ve geri ödeme paket geneli için ortaktır
+      const avgRoi = savingsList.length > 0 ? String(savingsList[0].roi || 0) : '0';
+      const packagePayback = savingsList.length > 0 ? String(savingsList[0].payback || '-') : '-';
 
       rows.push([
         'TOPLAM FİNANSAL GERİ KAZANIM',
@@ -720,7 +721,7 @@ Yalın dönüşüm araçlarının (SMED, 5S, TPM Otonom Bakım ve Poka-Yoke) ent
         Math.round(totalFuture).toLocaleString('tr-TR'),
         Math.round(totalSavingVal).toLocaleString('tr-TR'),
         `${avgRoi}x`,
-        String(totalCo2)
+        packagePayback
       ]);
 
       let currentY = TableRenderer.drawTable(doc, cols, rows, 15, 50, () => {}, this.themePrimary, '#111827', '#F8FAFC');

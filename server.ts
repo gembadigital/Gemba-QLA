@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { registerCostStructureRoute } from "./lib/costStructure";
 
 dotenv.config();
 
@@ -11,10 +12,11 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3001;
 
   app.use(express.json());
+  registerCostStructureRoute(app, () => process.env.GEMINI_API_KEY);
 
   // Helper for calling Gemini with retry and fallback across multiple models
   async function callGeminiDynamic(ai: GoogleGenAI, systemInstruction: string, contents: any[]): Promise<string> {
-    const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+    const models = ["gemini-3.8-flash", "gemini-flash-latest"];
     let lastError: any = null;
 
     for (const model of models) {

@@ -27,6 +27,7 @@ export interface Assessment {
 
 export interface OperationData {
   companyId: string;
+  currency?: string;
   // Field values
   setupMachineCount: string;
   annualVolume: string;
@@ -39,6 +40,11 @@ export interface OperationData {
   reworkRate: string;
   overtimeRate: string;
   leadTime: string;
+  stockUnits?: string;
+  setupTimePct?: string;
+  breakdownPct?: string;
+  planRealizationPct?: string;
+  sustainYears?: string;
   oee: string;
   coveredArea: string;
   operatorsCount: string;
@@ -98,7 +104,6 @@ export interface SavingResult {
   annualSaving: number;
   roi: number;
   payback: number;
-  co2Reduction: number;
   createdDate: string;
 }
 
@@ -294,7 +299,6 @@ export function seedInitialDatabase() {
         annualSaving: 750000,
         roi: 6.5,
         payback: 2,
-        co2Reduction: 12,
         createdDate: now,
       }
     ];
@@ -733,6 +737,11 @@ export const GembaDB = {
         reworkRate: operationFields.reworkRate || existingOp?.reworkRate || '2.7',
         overtimeRate: operationFields.overtimeRate || existingOp?.overtimeRate || '8.5',
         leadTime: operationFields.leadTime || existingOp?.leadTime || '12',
+        stockUnits: operationFields.stockUnits ?? existingOp?.stockUnits ?? '',
+        setupTimePct: operationFields.setupTimePct ?? existingOp?.setupTimePct ?? '',
+        breakdownPct: operationFields.breakdownPct ?? existingOp?.breakdownPct ?? '',
+        planRealizationPct: operationFields.planRealizationPct ?? existingOp?.planRealizationPct ?? '',
+        sustainYears: operationFields.sustainYears ?? existingOp?.sustainYears ?? '3',
         oee: operationFields.oee || existingOp?.oee || '58',
         coveredArea: operationFields.coveredArea || existingOp?.coveredArea || '4.500',
         operatorsCount: operationFields.operatorsCount || existingOp?.operatorsCount || '120',

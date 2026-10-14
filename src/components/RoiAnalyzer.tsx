@@ -14,9 +14,10 @@ import {
   X,
   Gauge,
   FileDown,
-  Sliders,
   RefreshCw
 } from 'lucide-react';
+import { QlaResult, breakEvenCurve, PACKAGES, ASSUMPTIONS } from '../engine/qla';
+import { ExecutivePitchGuide, PitchFinding } from './ExecutivePitchGuide';
 
 export interface RoiAnalyzerProps {
   currency: string;
@@ -61,8 +62,15 @@ export interface RoiAnalyzerProps {
   op3_max: number;
   op4_min: number;
   op4_max: number;
-  selectedOption: number;
-  setSelectedOption?: (val: 1 | 2 | 3) => void;
+  qla: QlaResult;
+  setSelectedPackageId?: (id: string) => void;
+  sustainYears?: number;
+  setSustainYears?: (n: number) => void;
+  pitchFindings?: PitchFinding[];
+  maturityScore?: number;
+  answeredCount?: number;
+  pitchInputs?: { scrapPct: number; reworkPct: number; overtimePct: number; plannedEffPct: number; actualEffPct: number; oeePct: number; leadTimeDays: number };
+  costFromSector?: boolean;
   leadTimeNum: number;
   setupDurationNum?: number;
   oeeNum?: number;
@@ -361,8 +369,15 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   op3_max,
   op4_min,
   op4_max,
-  selectedOption,
-  setSelectedOption,
+  qla,
+  setSelectedPackageId,
+  sustainYears = 3,
+  setSustainYears,
+  pitchFindings = [],
+  maturityScore = 0,
+  answeredCount = 0,
+  pitchInputs = { scrapPct: 0, reworkPct: 0, overtimePct: 0, plannedEffPct: 0, actualEffPct: 0, oeePct: 0, leadTimeDays: 0 },
+  costFromSector = false,
   leadTimeNum,
   setupDurationNum,
   oeeNum,
@@ -453,65 +468,14 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   useProductFamilyRecovery = false,
   setUseProductFamilyRecovery
 }) => {
-  const getOptRate = (ag: number) => {
-    let baseRate = baseUnitRate || 0;
-    if (!baseRate) {
-      // Fallback if not provided
-      const estTry = eurTry || 37.65;
-      if (currency === 'TRY') {
-        const rawDailyRate = 650 * estTry;
-        baseRate = Math.ceil(rawDailyRate / 500) * 500;
-      } else if (currency === 'EUR') {
-        baseRate = 650;
-      } else {
-        const rawDailyUsd = 650 * (estTry / (usdTry || (estTry / 1.09)));
-        baseRate = Math.round(rawDailyUsd / 10) * 10;
-      }
-    }
-
-    let discountPercent = 0;
-    if (ag >= 105 && ag <= 156) {
-      discountPercent = 10;
-    } else if (ag >= 157) {
-      discountPercent = 15;
-    }
-
-    if (discountPercent === 0) {
-      return baseRate;
-    }
-
-    const rawDiscounted = baseRate * (1 - discountPercent / 100);
-    const tryFloor = 30000;
-    let currencyFloor = tryFloor;
-    const activeEurTry = eurTry || 37.65;
-    const activeUsdTry = usdTry || (activeEurTry / 1.09);
-
-    if (currency === 'EUR') {
-      currencyFloor = tryFloor / activeEurTry;
-    } else if (currency === 'USD') {
-      currencyFloor = tryFloor / activeUsdTry;
-    }
-
-    if (rawDiscounted < currencyFloor) {
-      if (baseRate <= currencyFloor) {
-        return baseRate;
-      } else {
-        return currency === 'TRY' ? tryFloor : currencyFloor;
-      }
-    }
-
-    return currency === 'TRY' ? Math.round(rawDiscounted / 500) * 500 : Math.round(rawDiscounted);
-  };
-
-  const realOp1Rate = getOptRate(52);
-  const realOp2Rate = getOptRate(104);
-  const realOp3Rate = getOptRate(156);
-  const realOp4Rate = getOptRate(208);
-
-  const realOp1Budget = Math.round(52 * realOp1Rate);
-  const realOp2Budget = Math.round(104 * realOp2Rate);
-  const realOp3Budget = Math.round(156 * realOp3Rate);
-  const realOp4Budget = Math.round(208 * realOp4Rate);
+  // Paket bütçeleri ve kazançları tek kaynaktan (src/engine/qla.ts)
+  const pkgOf = (id: string) => qla.packages.find(p => p.def.id === id)!;
+  const realOp1Budget = pkgOf('standart').budget;
+  const realOp2Budget = pkgOf('hizli').budget;
+  const realOp3Budget = pkgOf('donusum').budget;
+  const realOp4Budget = pkgOf('opmuk').budget;
+  const sel = qla.selected;
+  const shortName = (name: string) => name.replace(' Programı', '').replace('Programı', '');
 
   const familyRatio = (Number(urunGrubuOran) || 35) / 100;
 
@@ -553,265 +517,63 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   const [isMatrixExpanded, setIsMatrixExpanded] = React.useState(false);
   const [successRatePct, setSuccessRatePct] = React.useState<number>(100);
   const [isExecutivePitchOpen, setIsExecutivePitchOpen] = React.useState<boolean>(false);
-  const [isEditingBenchmarks, setIsEditingBenchmarks] = React.useState<boolean>(false);
-
-  // Editable Benchmark state (customizable directly by consultant)
-  const [benchmarks, setBenchmarks] = React.useState({
-    sc: { minPct: oppScR?.minPct ?? 15, maxPct: oppScR?.maxPct ?? 50 },
-    fm: { minPct: oppFmR?.minPct ?? 12, maxPct: oppFmR?.maxPct ?? 45 },
-    mes: { minPct: oppMesR?.minPct ?? 15, maxPct: oppMesR?.maxPct ?? 50 },
-    yi: { minPct: oppYiR?.minPct ?? 10, maxPct: oppYiR?.maxPct ?? 40 },
-    ov: { minPct: oppOvR?.minPct ?? 10, maxPct: oppOvR?.maxPct ?? 45 },
-    setup: { minPct: oppSetupR?.minPct ?? 15, maxPct: oppSetupR?.maxPct ?? 55 },
-    pd: { minPct: oppPdR?.minPct ?? 10, maxPct: oppPdR?.maxPct ?? 45 },
-    oee: { minPct: oppOeeR?.minPct ?? 15, maxPct: oppOeeR?.maxPct ?? 55 },
-    opv: { minPct: oppOpvR?.minPct ?? 12, maxPct: oppOpvR?.maxPct ?? 50 },
-    lt: { minPct: oppLtR?.minPct ?? 10, maxPct: oppLtR?.maxPct ?? 40 },
-    wip: { minPct: oppWipR?.minPct ?? 10, maxPct: oppWipR?.maxPct ?? 40 },
-    sp: { minPct: oppSpR?.minPct ?? 10, maxPct: oppSpR?.maxPct ?? 30 }
-  });
-
-  const handleBenchmarkChange = (key: keyof typeof benchmarks, field: 'minPct' | 'maxPct', val: number) => {
-    setBenchmarks(prev => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        [field]: Math.max(0, Math.min(100, val))
-      }
-    }));
-  };
 
   // Active Live Exchange Rate
   const activeRate = currency === 'EUR' ? (eurTry || 37.65) : currency === 'USD' ? (usdTry || 34.80) : 1;
 
-  // Dynamic Opportunity Range calculations based on custom benchmarks & loss pools
-  const d_sc_min = loss_kalite > 0 ? loss_kalite * (benchmarks.sc.minPct / 100) : 0;
-  const d_sc_max = loss_kalite > 0 ? loss_kalite * (benchmarks.sc.maxPct / 100) : 0;
-  const d_fm_min = loss_hurda > 0 ? loss_hurda * (benchmarks.fm.minPct / 100) : 0;
-  const d_fm_max = loss_hurda > 0 ? loss_hurda * (benchmarks.fm.maxPct / 100) : 0;
-  const d_mes_min = loss_mesai > 0 ? loss_mesai * (benchmarks.mes.minPct / 100) : 0;
-  const d_mes_max = loss_mesai > 0 ? loss_mesai * (benchmarks.mes.maxPct / 100) : 0;
-  const d_yi_min = loss_kalite > 0 ? loss_kalite * (benchmarks.yi.minPct / 100) : 0;
-  const d_yi_max = loss_kalite > 0 ? loss_kalite * (benchmarks.yi.maxPct / 100) : 0;
-  const d_ov_min = loss_iscilik > 0 ? loss_iscilik * (benchmarks.ov.minPct / 100) : 0;
-  const d_ov_max = loss_iscilik > 0 ? loss_iscilik * (benchmarks.ov.maxPct / 100) : 0;
-
-  const d_setup_min = loss_durus > 0 ? loss_durus * (benchmarks.setup.minPct / 100) : 0;
-  const d_setup_max = loss_durus > 0 ? loss_durus * (benchmarks.setup.maxPct / 100) : 0;
-  const d_pd_min = loss_kapasite > 0 ? loss_kapasite * (benchmarks.pd.minPct / 100) : 0;
-  const d_pd_max = loss_kapasite > 0 ? loss_kapasite * (benchmarks.pd.maxPct / 100) : 0;
-  const d_oee_min = loss_kapasite > 0 ? loss_kapasite * (benchmarks.oee.minPct / 100) : 0;
-  const d_oee_max = loss_kapasite > 0 ? loss_kapasite * (benchmarks.oee.maxPct / 100) : 0;
-  const d_opv_min = loss_iscilik > 0 ? loss_iscilik * (benchmarks.opv.minPct / 100) : 0;
-  const d_opv_max = loss_iscilik > 0 ? loss_iscilik * (benchmarks.opv.maxPct / 100) : 0;
-
-  const d_lt_min = loss_kapasite > 0 ? loss_kapasite * (benchmarks.lt.minPct / 100) : 0;
-  const d_lt_max = loss_kapasite > 0 ? loss_kapasite * (benchmarks.lt.maxPct / 100) : 0;
-  const d_wip_min = loss_kapasite > 0 ? loss_kapasite * (benchmarks.wip.minPct / 100) : 0;
-  const d_wip_max = loss_kapasite > 0 ? loss_kapasite * (benchmarks.wip.maxPct / 100) : 0;
-  const d_sp_min = loss_kapasite > 0 ? loss_kapasite * (benchmarks.sp.minPct / 100) : 0;
-  const d_sp_max = loss_kapasite > 0 ? loss_kapasite * (benchmarks.sp.maxPct / 100) : 0;
-
+  // Fırsat satırları: seçili paketin kazancı kategorilere dağıtılmış (toplam = paket aralığı)
   const f_ratio = useProductFamilyRecovery ? familyRatio : 1;
+  const oppRows = qla.opportunities.map(o => ({ ...o, gainMin: o.gainMin * f_ratio, gainMax: o.gainMax * f_ratio }));
+  const active_total_min = oppRows.reduce((s, o) => s + o.gainMin, 0);
+  const active_total_max = oppRows.reduce((s, o) => s + o.gainMax, 0);
 
-  const active_sc_min = d_sc_min * f_ratio;
-  const active_sc_max = d_sc_max * f_ratio;
-  const active_fm_min = d_fm_min * f_ratio;
-  const active_fm_max = d_fm_max * f_ratio;
-  const active_mes_min = d_mes_min * f_ratio;
-  const active_mes_max = d_mes_max * f_ratio;
-  const active_yi_min = d_yi_min * f_ratio;
-  const active_yi_max = d_yi_max * f_ratio;
-  const active_ov_min = d_ov_min * f_ratio;
-  const active_ov_max = d_ov_max * f_ratio;
+  // Maliyet azaltım grafiği: sadece verisi olan kayıplar, hedef = kayıp − seçili paket beklenen kazancı
+  const chartData = qla.opportunities.filter(o => o.loss > 0).map(o => {
+    const target = Math.round(o.loss - (o.gainMin + o.gainMax) / 2);
+    const pct = o.loss > 0 ? Math.round((1 - target / o.loss) * 100) : 0;
+    return { label: o.label, current: o.loss, target, reduction: `-%${pct}`, tool: o.tool, desc: qla.losses.find(l => l.key === o.key)?.formula || '' };
+  });
 
-  const active_setup_min = d_setup_min * f_ratio;
-  const active_setup_max = d_setup_max * f_ratio;
-  const active_pd_min = d_pd_min * f_ratio;
-  const active_pd_max = d_pd_max * f_ratio;
-  const active_oee_min = d_oee_min * f_ratio;
-  const active_oee_max = d_oee_max * f_ratio;
-  const active_opv_min = d_opv_min * f_ratio;
-  const active_opv_max = d_opv_max * f_ratio;
-
-  const active_lt_min = d_lt_min * f_ratio;
-  const active_lt_max = d_lt_max * f_ratio;
-  const active_wip_min = d_wip_min * f_ratio;
-  const active_wip_max = d_wip_max * f_ratio;
-  const active_sp_min = d_sp_min * f_ratio;
-  const active_sp_max = d_sp_max * f_ratio;
-
-  const active_total_min = (active_sc_min + active_fm_min + active_mes_min + active_yi_min + active_ov_min + active_setup_min + active_pd_min + active_oee_min + active_opv_min + active_lt_min + active_wip_min + active_sp_min);
-  const active_total_max = (active_sc_max + active_fm_max + active_mes_max + active_yi_max + active_ov_max + active_setup_max + active_pd_max + active_oee_max + active_opv_max + active_lt_max + active_wip_max + active_sp_max);
-
-  // ESG Carbon Footprint Metric Calculation
-  const scaledAnnualGain = netFinancialGain * (successRatePct / 100);
-  const co2Tons = Math.max(8, Math.round((scaledAnnualGain / 100000) * 1.6 + (loss_hurda > 0 ? 14 : 0) + (loss_durus > 0 ? 10 : 0)));
-  const treesSavedEquivalent = Math.round(co2Tons * 45);
-
-  // Dynamic Break-Even & Cumulative Cash Flow Chart calculations
-  const activeOptionBudget = selectedOption === 1 
-    ? (totalOp1Lira || 1560000) 
-    : selectedOption === 2 
-    ? (totalOp2Lira || 2808000) 
-    : selectedOption === 3 
-    ? (totalOp1Lira * 1.5 || 4212000) 
-    : (totalOp1Lira * 2.0 || 5616000);
-    
-  // Convert annual gain to TRY for Break-even calculation if primary currency is USD or EUR
-  const scaledAnnualGainInTRY = scaledAnnualGain * activeRate;
-  const activeMonthlyGainInTRY = scaledAnnualGainInTRY / 12;
-
-  const breakEvenMonthsData: { month: number; cumSavings: number; cumCost: number; netFlow: number }[] = [];
-  let cumSavingsAcc = 0;
-  let detectedBreakEvenMonth = 0;
-  for (let m = 1; m <= 12; m++) {
-    const rampFactor = Math.min(1.0, m * 0.25);
-    cumSavingsAcc += activeMonthlyGainInTRY * rampFactor;
-    const cumCost = activeOptionBudget;
-    const netFlow = cumSavingsAcc - cumCost;
-    if (detectedBreakEvenMonth === 0 && netFlow >= 0) {
-      detectedBreakEvenMonth = m;
-    }
-    breakEvenMonthsData.push({
-      month: m,
-      cumSavings: Math.round(cumSavingsAcc),
-      cumCost: Math.round(cumCost),
-      netFlow: Math.round(netFlow)
-    });
-  }
+  // Başa baş: seçili paket bütçesi, beklenen kazanç × başarı oranı (aynı para birimi)
+  const scaledAnnualGain = sel.gainMid * (successRatePct / 100);
+  const activeOptionBudget = sel.budget;
+  const { curve: breakEvenMonthsData, month: detectedBreakEvenMonth } = breakEvenCurve(activeOptionBudget, scaledAnnualGain);
 
   const renderMatrixTable = (isLarge: boolean = false) => {
     const textDensityClass = isLarge ? "text-xs md:text-sm animate-fade-in" : "text-[11px]";
     const paddingClass = isLarge ? "p-3.5 md:p-4" : "p-2.5";
     
-    const renderBenchmarkCell = (key: keyof typeof benchmarks) => {
-      if (isEditingBenchmarks) {
-        return (
-          <div className="flex items-center justify-center gap-1 font-mono">
-            <input
-              type="number"
-              min="0"
-              max="100"
-              className="w-11 bg-amber-50 border border-amber-400 text-amber-950 font-bold rounded text-center text-[10.5px] py-0.5"
-              value={benchmarks[key].minPct}
-              onChange={e => handleBenchmarkChange(key, 'minPct', Number(e.target.value))}
-            />
-            <span className="text-slate-400 text-[10px] font-bold">-%</span>
-            <input
-              type="number"
-              min="0"
-              max="100"
-              className="w-11 bg-amber-50 border border-amber-400 text-amber-950 font-bold rounded text-center text-[10.5px] py-0.5"
-              value={benchmarks[key].maxPct}
-              onChange={e => handleBenchmarkChange(key, 'maxPct', Number(e.target.value))}
-            />
-            <span className="text-slate-400 text-[10px] font-bold">%</span>
-          </div>
-        );
-      }
-      return `%${benchmarks[key].minPct} - %${benchmarks[key].maxPct}`;
-    };
-
     return (
       <div className="overflow-hidden border border-slate-200/80 rounded-2xl overflow-x-auto bg-white" id={isLarge ? "expanded-matrix-table-container" : "compact-matrix-table-container"}>
         <table className={`w-full text-left ${textDensityClass} border-collapse min-w-[550px]`}>
           <thead>
             <tr className="bg-slate-900 text-white border-b border-slate-800">
-              <th className={`${paddingClass} font-extrabold uppercase tracking-wider text-[10px]`}>Fırsat Alanı</th>
-              <th className={`${paddingClass} font-extrabold uppercase tracking-wider text-[10px]`}>Maliyet Konusu</th>
+              <th className={`${paddingClass} font-extrabold uppercase tracking-wider text-[10px]`}>Kayıp Kalemi</th>
+              <th className={`${paddingClass} font-extrabold uppercase tracking-wider text-[10px]`}>Yalın Araç</th>
               <th className={`${paddingClass} font-extrabold uppercase tracking-wider text-[10px] text-center`}>
-                Benchmark (%) {isEditingBenchmarks && <span className="text-amber-300 animate-pulse">(Düzenleme Modu)</span>}
+                Kayıptan Geri Kazanım (%)
               </th>
               <th className={`${paddingClass} font-extrabold uppercase tracking-wider text-[10px] text-right`}>Min Potansiyel ({currencySymbol})</th>
               <th className={`${paddingClass} font-extrabold uppercase tracking-wider text-[10px] text-right`}>Max Potansiyel ({currencySymbol})</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 text-slate-800 font-semibold">
-            {/* DOĞRUDAN MALİYET AZALTMA */}
-            <tr className="bg-rose-50/20">
-              <td className={`${paddingClass} font-bold text-rose-950`} rowSpan={5}>Doğrudan Maliyet Azaltma</td>
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Hurda Maliyeti</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('sc')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-mono`}>{currencySymbol}{Math.round(active_sc_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-black font-mono`}>{currencySymbol}{Math.round(active_sc_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-rose-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Fire &amp; Malzeme Kayıpları</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('fm')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-mono`}>{currencySymbol}{Math.round(active_fm_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-black font-mono`}>{currencySymbol}{Math.round(active_fm_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-rose-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Fazla Mesai Azaltımı</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('mes')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-mono`}>{currencySymbol}{Math.round(active_mes_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-black font-mono`}>{currencySymbol}{Math.round(active_mes_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-rose-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Yeniden İşleme (Rework)</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('yi')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-mono`}>{currencySymbol}{Math.round(active_yi_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-black font-mono`}>{currencySymbol}{Math.round(active_yi_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-rose-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Operasyonel Verimsizlik</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('ov')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-mono`}>{currencySymbol}{Math.round(active_ov_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-rose-800 font-black font-mono`}>{currencySymbol}{Math.round(active_ov_max).toLocaleString('tr-TR')}</td>
-            </tr>
-
-            {/* KAPASİTE YARATMA */}
-            <tr className="bg-indigo-50/20 border-t border-slate-150">
-              <td className={`${paddingClass} font-bold text-indigo-950`} rowSpan={4}>Kapasite Yaratma</td>
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Setup Süreleri (SMED)</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('setup')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-mono`}>{currencySymbol}{Math.round(active_setup_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-black font-mono`}>{currencySymbol}{Math.round(active_setup_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-indigo-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Plansız Duruşların Önlenmesi</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('pd')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-mono`}>{currencySymbol}{Math.round(active_pd_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-black font-mono`}>{currencySymbol}{Math.round(active_pd_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-indigo-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>OEE İyileştirmesi</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('oee')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-mono`}>{currencySymbol}{Math.round(active_oee_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-black font-mono`}>{currencySymbol}{Math.round(active_oee_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-indigo-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Operatör Verimliliği</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('opv')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-mono`}>{currencySymbol}{Math.round(active_opv_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-indigo-800 font-black font-mono`}>{currencySymbol}{Math.round(active_opv_max).toLocaleString('tr-TR')}</td>
-            </tr>
-
-            {/* STRATEJİK OPERASYONEL KAZANÇ */}
-            <tr className="bg-emerald-50/20 border-t border-slate-150">
-              <td className={`${paddingClass} font-bold text-emerald-950`} rowSpan={3}>Stratejik Operasyonel Kazanç</td>
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Lead Time (Sipariş Çevrimi)</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('lt')}</td>
-              <td className={`${paddingClass} text-right text-emerald-850 font-mono`}>{currencySymbol}{Math.round(active_lt_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-emerald-850 font-black font-mono`}>{currencySymbol}{Math.round(active_lt_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-emerald-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>WIP (Yarı Mamul) Azaltımı</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('wip')}</td>
-              <td className={`${paddingClass} text-right text-emerald-850 font-mono`}>{currencySymbol}{Math.round(active_wip_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-emerald-850 font-black font-mono`}>{currencySymbol}{Math.round(active_wip_max).toLocaleString('tr-TR')}</td>
-            </tr>
-            <tr className="bg-emerald-50/20">
-              <td className={`${paddingClass} text-slate-900 font-bold`}>Sevkiyat Performansı</td>
-              <td className={`${paddingClass} text-center text-slate-600`}>{renderBenchmarkCell('sp')}</td>
-              <td className={`${paddingClass} text-right text-emerald-850 font-mono`}>{currencySymbol}{Math.round(active_sp_min).toLocaleString('tr-TR')}</td>
-              <td className={`${paddingClass} text-right text-emerald-850 font-black font-mono`}>{currencySymbol}{Math.round(active_sp_max).toLocaleString('tr-TR')}</td>
-            </tr>
+            {oppRows.map(o => (
+              <tr key={o.key} className={o.loss > 0 ? 'bg-emerald-50/20' : 'bg-slate-50/60 text-slate-400'}>
+                <td className={`${paddingClass} font-bold text-slate-900`}>
+                  {o.label}
+                  <span className="block text-[9.5px] font-semibold text-slate-500">Kayıp: {currencySymbol}{Math.round(o.loss).toLocaleString('tr-TR')}</span>
+                </td>
+                <td className={`${paddingClass} text-slate-600`}>{o.tool}</td>
+                <td className={`${paddingClass} text-center text-slate-600`}>{o.loss > 0 ? `%${o.pctMin} - %${o.pctMax}` : 'Veri yok'}</td>
+                <td className={`${paddingClass} text-right text-emerald-800 font-mono`}>{o.loss > 0 ? `${currencySymbol}${Math.round(o.gainMin).toLocaleString('tr-TR')}` : '—'}</td>
+                <td className={`${paddingClass} text-right text-emerald-800 font-black font-mono`}>{o.loss > 0 ? `${currencySymbol}${Math.round(o.gainMax).toLocaleString('tr-TR')}` : '—'}</td>
+              </tr>
+            ))}
 
             {/* SUMMARIZED TOTALS */}
             <tr className="bg-slate-900 text-white font-bold border-t-2 border-slate-700">
-              <td className={`${paddingClass} uppercase text-[9px] font-black`} colSpan={2}>Toplam Ekonomik Fırsat Potansiyeli</td>
+              <td className={`${paddingClass} uppercase text-[9px] font-black`} colSpan={2}>Toplam Geri Kazanım — {shortName(sel.def.name)} ({sel.def.days} Adam-Gün)</td>
               <td className={`${paddingClass} text-center text-[10px] text-slate-400 font-black`}>Ciroya Oran: %{m_minEconomicLossPct} - %{m_maxEconomicLossPct}</td>
               <td className={`${paddingClass} text-right text-amber-400 font-black font-mono`}>
                 {currencySymbol}{Math.round(active_total_min).toLocaleString('tr-TR')}
@@ -839,50 +601,25 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   const renderFormulaList = (isLarge: boolean = false) => {
     const textDensityClass = isLarge ? "text-xs md:text-sm" : "text-[11px]";
     const headingClass = isLarge ? "text-sm md:text-base text-slate-800 font-extrabold flex items-center gap-1.5" : "text-slate-800 font-bold";
-    const highlightTextClass = isLarge ? "text-slate-700 font-semibold" : "text-slate-600";
     return (
-      <div className={`${textDensityClass} text-slate-600 leading-relaxed font-semibold space-y-4`} id={isLarge ? "expanded-formula-container" : "compact-formula-container"}>
-        <div className="border-b border-slate-200/50 pb-3">
-          <p className={headingClass}>• 1. Kalitesizlik / Hurda Maliyeti (COPQ):</p>
-          <div className="text-slate-500 font-medium italic mt-1 ml-3 space-y-1">
-            <p>- <strong>Hesaplama:</strong> Yıllık Ciro ({currencySymbol}{turnoverNum.toLocaleString('tr-TR')}) x COPQ Oranı (%{copqRateNum}) [Hurda: %{scrapRateNum} + Tamir: %{reworkRateNum}].</p>
-            <p className={`mt-1 ${highlightTextClass}`}>
-              - <strong>Muhafazakar (Fiziksel Hurda Kaybı):</strong> Yıllık Ciro x %{scrapRateNum} Hurda Oranı = {currencySymbol}{Math.round(turnoverNum * (scrapRateNum / 100)).toLocaleString('tr-TR')} / yıl.
-            </p>
-            <p className={highlightTextClass}>
-              - <strong>Tamir / Yeniden İşleme Yükü:</strong> Yıllık Ciro x %{reworkRateNum} Tamir Oranı x 0.35 sönüm katsayısı = {currencySymbol}{Math.round(turnoverNum * (reworkRateNum / 100) * 0.35).toLocaleString('tr-TR')} / yıl.
-            </p>
-            <p className={`mt-1.5 font-bold text-red-700 ${isLarge ? 'text-xs md:text-sm bg-red-50 p-3 rounded-xl border border-red-100/50' : ''}`}>
-              - <strong>Toplam COPQ Asgari Potansiyeli (Muhafazakar):</strong> {currencySymbol}{copqLossMin.toLocaleString('tr-TR')} / yıl. Yeniden işleme işçiliği, tamir sürelerindeki enerji, ek kalite kontrolör ve müşteri tazminatlarını içerecek şekilde Beklenen ve Üst senaryolarda sırasıyla <strong>1.25x</strong> ve <strong>1.45x</strong> çarpanıyla modellenmiştir.
-            </p>
+      <div className={`${textDensityClass} text-slate-600 leading-relaxed font-semibold space-y-3`} id={isLarge ? "expanded-formula-container" : "compact-formula-container"}>
+        <p className="text-slate-500 font-medium">
+          Maliyet tabanları = Ciro ({currencySymbol}{turnoverNum.toLocaleString('tr-TR')}) × maliyet yapısı oranları:
+          Malzeme {currencySymbol}{qla.bases.malzeme.toLocaleString('tr-TR')} · İşçilik {currencySymbol}{qla.bases.iscilik.toLocaleString('tr-TR')}{qla.bases.laborFromHeadcount ? ' (operatör × maliyet)' : ''} ·
+          Enerji {currencySymbol}{qla.bases.enerji.toLocaleString('tr-TR')} · Bakım {currencySymbol}{qla.bases.bakim.toLocaleString('tr-TR')} · Genel {currencySymbol}{qla.bases.genel.toLocaleString('tr-TR')}
+        </p>
+        {qla.losses.map((l, i) => (
+          <div key={l.key} className="border-b border-slate-200/50 pb-2">
+            <p className={headingClass}>• {i + 1}. {l.label}: {l.hasData ? `${currencySymbol}${l.amount.toLocaleString('tr-TR')} / yıl` : 'Veri yok — hesaba katılmadı'}</p>
+            <p className="text-slate-500 font-medium italic mt-1 ml-3">{l.hasData ? l.formula : `Gerekli girdi: ${l.missing}`}</p>
           </div>
-        </div>
-
-        <div className="border-b border-slate-200/50 pb-3">
-          <p className={headingClass}>• 2. Model Değişim (Setup) Duruş Kaybı:</p>
-          <div className="text-slate-500 font-medium italic mt-1 ml-3 space-y-1.5">
-            <p>- <strong>Setup Sıklığı:</strong> {setupFrequencyNum} setup/hafta x 52 hafta x {setupMachineCountNum} makine = {annualSetupsCount.toLocaleString('tr-TR')} setup/yıl.</p>
-            <p>- <strong>Toplam Setup Süresi:</strong> {annualSetupHours.toLocaleString('tr-TR')} saat / yıl.</p>
-            <p>- <strong>Doğrudan İşçilik Kaybı (Muhafazakar):</strong> {annualSetupHours.toLocaleString('tr-TR')} sa x {affectedOpsSetupNum} op x Saatlik İşçilik ({currencySymbol}{Math.round(grossLaborCostNum / 180).toLocaleString('tr-TR')}/sa) = {currencySymbol}{setupLaborLoss.toLocaleString('tr-TR')} / yıl.</p>
-            <p>- <strong>Kapasite Fırsat Maliyeti (Opportunity Loss):</strong> Duruşlardaki ciro fırsatı; Makine Başına düşen saatlik ciro ({currencySymbol}{Math.round(hourlyTurnoverRate).toLocaleString('tr-TR')}/sa) x Karlılık katsayısı (1.35) x Yıllık setup süreleri = {currencySymbol}{Math.round(setupOpportunityLoss).toLocaleString('tr-TR')} / yıl.</p>
-            <p className={`${highlightTextClass} not-italic`}>
-              - <strong>Senaryolama:</strong> Muhafazakar sadece işçilik kaybıdır. Beklenen senaryomuz kaybedilen cironun %60'ının satış fırsatı olarak geri kazanılabileceğini, Üst Potansiyel ise kaybedilen kapasitenin tamamının pazar talebine dönüştürülebileceğini varsayar.
-            </p>
-          </div>
-        </div>
-
-        <div>
-          <p className={headingClass}>• 3. Verimsizlik ve Plansız Duruş Maliyeti:</p>
-          <div className="text-slate-500 font-medium italic mt-1 ml-3 space-y-1.5">
-            <p>- <strong>Verimlilik Açığı (Gap):</strong> %{plannedEffNum} (Planlanan) - %{actualEffNum} (Gerçek OEE) = %{efficiencyGap} verimlilik sapması.</p>
-            <p>- <strong>Ödenen Operatör Saatleri:</strong> {opsNum} operatör x 12 ay x 180 sa = {annualOperatorHoursPaid.toLocaleString('tr-TR')} adam-saat / yıl.</p>
-            <p>- <strong>Doğrudan Boşa Giden İşçilik (Muhafazakar):</strong> {annualOperatorHoursPaid.toLocaleString('tr-TR')} sa x %{efficiencyGap} gap x Saatlik İşçilik ({currencySymbol}{Math.round(grossLaborCostNum / 180).toLocaleString('tr-TR')}/sa) = {currencySymbol}{inefficiencyLaborLoss.toLocaleString('tr-TR')} / yıl.</p>
-            <p>- <strong>Sabit ve Değişken Genel Gider Erimesi:</strong> Makineler çalışırken ama boş dönerken harcanan elektrik, sönümlenemeyen amortisman ve amortisör kat sayısı (1.65) = {currencySymbol}{Math.round(inefficiencyOverheadLoss).toLocaleString('tr-TR')} / yıl.</p>
-            <p className={`${highlightTextClass} not-italic`}>
-              - <strong>Senaryolama:</strong> Muhafazakar sadece verimsiz ödenen doğrudan işçiliği gösterir. Beklenen ve Üst senaryolarda sönümlenemeyen amortisman ve fabrika genel gider payları eklenir.
-            </p>
-          </div>
-        </div>
+        ))}
+        <p className="text-slate-700 font-bold">
+          Toplam kayıp havuzu: {currencySymbol}{qla.totalLoss.toLocaleString('tr-TR')} / yıl (cironun %{qla.lossPctOfTurnover}'i) · ±%20 bant: {currencySymbol}{qla.totalLossMin.toLocaleString('tr-TR')} – {currencySymbol}{qla.totalLossMax.toLocaleString('tr-TR')}
+        </p>
+        <p className="text-slate-500 font-medium">
+          Geri kazanım: tam kapsamlı programda (156 gün) kaybın %{Math.round(ASSUMPTIONS.recoveryBand[0] * 100)}–{Math.round(ASSUMPTIONS.recoveryBand[1] * 100)}'i hedeflenir; diğer paketler bu bandın kapsamı oranında ({PACKAGES.map(p => `${p.days} gün %${Math.round(p.recovery[0] * 1000) / 10}-${Math.round(p.recovery[1] * 1000) / 10}`).join(' · ')}). Kazanç kategorilere kayıp büyüklüğü ve yalın araçlara tepki hızına göre dağıtılır; aynı kayıp iki kez sayılmaz.
+        </p>
       </div>
     );
   };
@@ -901,29 +638,13 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
     content += `Seçilen Tahmini Kazanç:\t${currencySymbol}${netFinancialGain.toLocaleString('tr-TR')}\n\n`;
 
     // 2. Tablo Kolon Basliklari
-    content += "Fırsat Sınıfı\tFırsat Alanı\tBenchmark (%)\tMin Potansiyel (" + currency + ")\tMax Potansiyel (" + currency + ")\n";
+    content += "Kayıp Kalemi\tYalın Araç\tKayıptan Geri Kazanım (%)\tMin Potansiyel (" + currency + ")\tMax Potansiyel (" + currency + ")\n";
 
     // 3. Rows
-    // Doğrudan Maliyet Azaltma
-    content += `Doğrudan Maliyet Azaltma\tHurda Maliyeti\t%${oppScR?.minPct || 0} - %${oppScR?.maxPct || 0}\t${Math.round(opp_sc_min || 0)}\t${Math.round(opp_sc_max || 0)}\n`;
-    content += `Doğrudan Maliyet Azaltma\tFire & Malzeme Kayıpları\t%${oppFmR?.minPct || 0} - %${oppFmR?.maxPct || 0}\t${Math.round(opp_fm_min || 0)}\t${Math.round(opp_fm_max || 0)}\n`;
-    content += `Doğrudan Maliyet Azaltma\tFazla Mesai Azaltımı\t%${oppMesR?.minPct || 0} - %${oppMesR?.maxPct || 0}\t${Math.round(opp_mes_min || 0)}\t${Math.round(opp_mes_max || 0)}\n`;
-    content += `Doğrudan Maliyet Azaltma\tYeniden İşleme (Rework)\t%${oppYiR?.minPct || 0} - %${oppYiR?.maxPct || 0}\t${Math.round(opp_yi_min || 0)}\t${Math.round(opp_yi_max || 0)}\n`;
-    content += `Doğrudan Maliyet Azaltma\tOperasyonel Verimsizlik\t%${oppOvR?.minPct || 0} - %${oppOvR?.maxPct || 0}\t${Math.round(opp_ov_min || 0)}\t${Math.round(opp_ov_max || 0)}\n`;
-
-    // Kapasite Yaratma
-    content += `Kapasite Yaratma\tSetup Süreleri (SMED)\t%${oppSetupR?.minPct || 0} - %${oppSetupR?.maxPct || 0}\t${Math.round(opp_setup_min || 0)}\t${Math.round(opp_setup_max || 0)}\n`;
-    content += `Kapasite Yaratma\tPlansız Duruşların Önlenmesi\t%${oppPdR?.minPct || 0} - %${oppPdR?.maxPct || 0}\t${Math.round(opp_pd_min || 0)}\t${Math.round(opp_pd_max || 0)}\n`;
-    content += `Kapasite Yaratma\tOEE İyileştirmesi\t%${oppOeeR?.minPct || 0} - %${oppOeeR?.maxPct || 0}\t${Math.round(opp_oee_min || 0)}\t${Math.round(opp_oee_max || 0)}\n`;
-    content += `Kapasite Yaratma\tOperatör Verimliliği\t%${oppOpvR?.minPct || 0} - %${oppOpvR?.maxPct || 0}\t${Math.round(opp_opv_min || 0)}\t${Math.round(opp_opv_max || 0)}\n`;
-
-    // Stratejik Operasyonel Kazanç
-    content += `Stratejik Operasyonel Kazanç\tLead Time (Sipariş Çevrimi)\t%${oppLtR?.minPct || 0} - %${oppLtR?.maxPct || 0}\t${Math.round(opp_lt_min || 0)}\t${Math.round(opp_lt_max || 0)}\n`;
-    content += `Stratejik Operasyonel Kazanç\tWIP (Yarı Mamul) Azaltımı\t%${oppWipR?.minPct || 0} - %${oppWipR?.maxPct || 0}\t${Math.round(opp_wip_min || 0)}\t${Math.round(opp_wip_max || 0)}\n`;
-    content += `Stratejik Operasyonel Kazanç\tSevkiyat Performansı\t%${oppSpR?.minPct || 0} - %${oppSpR?.maxPct || 0}\t${Math.round(opp_sp_min || 0)}\t${Math.round(opp_sp_max || 0)}\n`;
-
-    // Toplam
-    content += `Toplam\tToplam Ekonomik Fırsat Potansiyeli\tCiroya Oran: %${minEconomicLossPct} - %${maxEconomicLossPct}\t${Math.round(total_economic_min || 0)}\t${Math.round(total_economic_max || 0)}\n`;
+    oppRows.forEach(o => {
+      content += `${o.label}\t${o.tool}\t${o.loss > 0 ? `%${o.pctMin} - %${o.pctMax}` : 'Veri yok'}\t${Math.round(o.gainMin)}\t${Math.round(o.gainMax)}\n`;
+    });
+    content += `Toplam\t${sel.def.name} (${sel.def.days} Adam-Gün)\tCiroya Oran: %${minEconomicLossPct} - %${maxEconomicLossPct}\t${Math.round(active_total_min)}\t${Math.round(active_total_max)}\n`;
 
     const blob = new Blob([BOM + content], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -968,7 +689,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                   {currencySymbol}{Math.round(scaledAnnualGain).toLocaleString('tr-TR')} / yıl
                 </strong>
                 <span className="text-[9.5px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-900/50 px-1.5 py-0.5 rounded mt-1 font-bold text-center">
-                  %{selectedOption === 1 ? '18' : selectedOption === 2 ? '42' : '68'} İyileşme Hedefi
+                  {shortName(sel.def.name)}: Havuzun %{Math.round(sel.def.recovery[0] * 100)}-{Math.round(sel.def.recovery[1] * 100)}'i
                 </span>
               </div>
             </div>
@@ -1010,21 +731,29 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
               <span>%75 (Dengeli)</span>
               <span>%100 (Hedeflenen Tam Kazanç)</span>
             </div>
-          </div>
-
-          {/* ESG Carbon Footprint Badge */}
-          <div className="bg-emerald-950/40 p-3 rounded-2xl border border-emerald-900/60 flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-3">
-              <span className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl text-xl">🌱</span>
-              <div>
-                <span className="font-extrabold text-emerald-400 text-[11px] uppercase tracking-wider block">
-                  ESG &amp; KARBON AYAK İZİ DÜŞÜŞÜ (ÇEVRESEL ETKİ)
-                </span>
-                <p className="text-[11px] text-slate-300 font-semibold mt-0.5">
-                  İsraf engelleme ve duruş azaltımı ile tahmini <strong className="text-emerald-300">~{co2Tons} Ton CO2 / Yıl</strong> azaltım (~{treesSavedEquivalent} Ağaç)
-                </p>
+            <div className="flex items-center justify-between pt-2 mt-1 border-t border-slate-800 text-[11px]">
+              <span className="font-extrabold text-amber-400 uppercase tracking-wider text-[10.5px]">Kazanç Süresi (ürün ömrü)</span>
+              <div className="flex gap-1">
+                {[1, 3, 5].map(y => (
+                  <button key={y} type="button" onClick={() => setSustainYears && setSustainYears(y)}
+                    className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer ${sustainYears === y ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300'}`}>
+                    {y} yıl
+                  </button>
+                ))}
               </div>
             </div>
+          </div>
+
+          {/* Veri kapsamı ve uyarılar */}
+          <div className="bg-slate-850 p-3 rounded-2xl border border-slate-800 text-xs space-y-1">
+            <span className="font-extrabold text-amber-400 text-[11px] uppercase tracking-wider block">
+              Veri Kapsamı: {qla.losses.filter(l => l.hasData).length}/{qla.losses.length} kayıp kalemi hesaplandı
+            </span>
+            {qla.warnings.length === 0 ? (
+              <p className="text-[11px] text-slate-300 font-semibold">Tüm kayıp kalemleri girilen verilerden hesaplandı.</p>
+            ) : qla.warnings.map((w, i) => (
+              <p key={i} className="text-[11px] text-slate-300 font-semibold">• {w}</p>
+            ))}
           </div>
 
         </div>
@@ -1037,20 +766,22 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pl-1 text-[11px] leading-relaxed">
             <div>
-              • <strong className="text-slate-200">Kazanım Kaynağı:</strong> Seçilen <strong className="text-slate-200">Paket 0{selectedOption}</strong> hedefleri uyarınca, fabrikanın toplam yıllık israf havuzundan (<strong className="text-slate-200">{currencySymbol}{totalLossExpected.toLocaleString('tr-TR')}</strong>) belirlenen iyileşme katsayısı oranında geri kazanım elde edilir.
+              • <strong className="text-slate-200">Kazanım Kaynağı:</strong> Olgunluk skoruna göre önerilen paket <strong className="text-slate-200">{qla.recommended.def.name} ({qla.recommended.def.days} adam-gün)</strong>. Görüntülenen: <strong className="text-slate-200">{sel.def.name}</strong>. Yıllık kayıp havuzu (<strong className="text-slate-200">{currencySymbol}{totalLossExpected.toLocaleString('tr-TR')}</strong>, cironun %{qla.lossPctOfTurnover}'i; benzer firmalarda tipik %{ASSUMPTIONS.typicalLossPctOfTurnover[0]}–{ASSUMPTIONS.typicalLossPctOfTurnover[1]}) müşterinin maliyet yapısı ve girilen oranlardan hesaplanır. Tam kapsamlı programda hedef iyileştirme havuzu kaybın %{Math.round(ASSUMPTIONS.recoveryBand[0] * 100)}–{Math.round(ASSUMPTIONS.recoveryBand[1] * 100)}'i; olgunluk skoru düştükçe bandın üst ucuna yaklaşılır.
             </div>
             <div>
-              • <strong className="text-slate-200">İyileştirme Değeri:</strong> 
-              {selectedOption === 1 && <span> <strong>%18 Net İyileşme (Kayıp azaltımı)</strong> ile israf havuzunun %82'si kalacak şekilde modellenir ve <strong>{currencySymbol}{netFinancialGain.toLocaleString('tr-TR')}/yıl</strong> tasarruf edilir.</span>}
-              {selectedOption === 2 && <span> <strong>%42 Net İyileşme (Kayıp azaltımı)</strong> ile israf havuzunun %58'i kalacak şekilde modellenir ve <strong>{currencySymbol}{netFinancialGain.toLocaleString('tr-TR')}/yıl</strong> tasarruf edilir.</span>}
-              {selectedOption === 3 && <span> <strong>%68 Net İyileşme (Kayıp azaltımı)</strong> ile israf havuzunun %32'si kalacak şekilde modellenir ve <strong>{currencySymbol}{netFinancialGain.toLocaleString('tr-TR')}/yıl</strong> tasarruf edilir.</span>}
+              • <strong className="text-slate-200">İyileştirme Değeri:</strong> Bu paketle havuzun %{Math.round(sel.def.recovery[0] * 100)}-{Math.round(sel.def.recovery[1] * 100)}'i geri kazanılır: <strong>{currencySymbol}{sel.gainMin.toLocaleString('tr-TR')} - {currencySymbol}{sel.gainMax.toLocaleString('tr-TR')} / yıl</strong>. Proje bütçesi {currencySymbol}{sel.budget.toLocaleString('tr-TR')}, beklenen geri ödeme <strong>{sel.paybackExpMonths} ay</strong> (benzer projelerde ortalama {sel.def.avgPayback[0]}–{sel.def.avgPayback[1]} ay; sektöre göre değişir).
+            </div>
+            <div>
+              • <strong className="text-slate-200">Sürdürülebilir Kazanç:</strong> 1. yıl {currencySymbol}{sel.year1Gain.toLocaleString('tr-TR')} (ilk 4 ay kademeli). Ürün grubu üretimde kaldıkça kazanç sürer: {qla.sustainYears} yılda <strong>{currencySymbol}{sel.cumulativeGain.toLocaleString('tr-TR')}</strong> = yatırımın <strong>{sel.roiMultiple}x</strong>'i.
+            </div>
+            <div>
+              • <strong className="text-slate-200">Nakit & Kapasite (ROI dışı):</strong> {sel.cashRelease > 0 ? <>lead time -%{sel.def.kpi.leadTime} ile stoktan <strong>{currencySymbol}{sel.cashRelease.toLocaleString('tr-TR')}</strong> tek seferlik nakit serbest kalır. </> : 'Lead time/stok verisi yok. '}
+              {qla.capacityLines.length > 0 && <>Setup/arıza/performans kayıpları giderilirse %{qla.capacityUpside.freedPct} ilave kapasite ({qla.capacityLines.map(c => `${c.label} %${c.outputPct}${c.extraUnits ? ` ≈ ${c.extraUnits.toLocaleString('tr-TR')} adet` : ''}`).join(', ')}). </>}
+              {qla.capacityUpside.inPool > 0 && <>Plan açığı talep olduğunu gösterdiği için <strong>{currencySymbol}{qla.capacityUpside.inPool.toLocaleString('tr-TR')}</strong> katkı payı kayıp havuzuna dahil edildi. </>}
+              {qla.capacityUpside.hasData && <>Ek fırsat (havuz dışı{qla.capacityUpside.demandEvidence ? '' : ', talep olursa'}): <strong>{currencySymbol}{qla.capacityUpside.extraContribution.toLocaleString('tr-TR')}</strong> katkı payı. </>}
+              {qla.laborDuringStops > 0 && <>Duruşlarda operatör zamanı (ek fırsat, havuz dışı): {currencySymbol}{qla.laborDuringStops.toLocaleString('tr-TR')}.</>}
             </div>
           </div>
-          {selectedOption === 2 && (
-            <div className="mt-2.5 p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-300 leading-normal">
-              💡 <strong>Model Uyumluluk Notu:</strong> Hızlandırılmış Program (%42 net iyileşme ve ₺{netFinancialGain.toLocaleString('tr-TR')}/yıl tasarruf) hedefimiz; doğrudan fiziksel/operasyonel israfların (Matris IV tabanındaki azami ₺{Math.round(total_economic_max).toLocaleString('tr-TR')} doğrudan fırsat) ötesinde, sistemik verimlilik artışı, koordinasyon sinerjisi, lead-time kısalmasından sağlanan işletme sermayesi kazanımı ve SMED ile açığa çıkan kapasitenin ciroya dönüştürülmesi gibi <strong>bütünsel sistemik kaldıraçları</strong> içerir. Bu sayede model, doğrudan tespit edilen fiziksel kayıp sınırının üzerinde bir ek finansal değer yaratmaktadır.
-            </div>
-          )}
         </div>
       </div>
 
@@ -1068,24 +799,25 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                   III. OPERASYONEL KPI HEDEF DEĞİŞİMLERİ (ÖNCESİ VS. SONRASI)
                 </h4>
                 <p className="text-[11px] text-slate-500 font-semibold mt-1">
-                  Yarın Yol Haritası çerçevesinde {selectedOption}. Paket uyarınca ulaşılacak temel operasyonel performans ve hızlanma hedefleri
+                  {sel.def.name} ({sel.def.days} adam-gün) ile hedeflenen operasyonel performans
                 </p>
               </div>
 
               {/* Segment Selector for Scenarios */}
               <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 self-start sm:self-auto shrink-0 no-print">
-                {([1, 2, 3] as const).map(optId => (
+                {qla.packages.map(p => (
                   <button
-                    key={optId}
+                    key={p.def.id}
                     type="button"
-                    onClick={() => setSelectedOption && setSelectedOption(optId)}
-                    className={`cursor-pointer px-3.5 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
-                      selectedOption === optId
+                    onClick={() => setSelectedPackageId && setSelectedPackageId(p.def.id)}
+                    title={`${p.def.name} — ${p.def.days} adam-gün`}
+                    className={`cursor-pointer px-2.5 py-1.5 text-[10px] font-bold rounded-lg transition-all ${
+                      sel.def.id === p.def.id
                         ? 'bg-slate-900 text-white shadow-sm'
                         : 'text-slate-550 hover:text-slate-800'
                     }`}
                   >
-                    Paket 0{optId}
+                    {p.def.days} gün{p.recommended ? ' ★' : ''}
                   </button>
                 ))}
               </div>
@@ -1099,7 +831,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                     <div className="flex justify-between items-start gap-2">
                       <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wider block">⏱️ SETUP SÜRESİ (SMED)</span>
                       <span className="text-[9px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-md border border-amber-200 whitespace-nowrap">
-                        -{selectedOption === 1 ? '30%' : selectedOption === 2 ? '40%' : '50%'} Azalma
+                        -%{sel.def.kpi.setup} Azalma
                       </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-medium mt-1">Model değişim verimliliği, duruş azaltma çarpanı</p>
@@ -1115,11 +847,11 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                     <div className="flex justify-between text-[11px] font-semibold text-slate-650 pt-0.5">
                       <span>Hedeflenen Süre</span>
                       <span className="text-emerald-700 font-extrabold">
-                        {Math.round(setupDurationNum * (selectedOption === 1 ? 0.70 : selectedOption === 2 ? 0.60 : 0.50))} Dakika
+                        {Math.round(setupDurationNum * (1 - sel.def.kpi.setup / 100))} Dakika
                       </span>
                     </div>
                     <div className="w-full h-2.5 bg-slate-200/70 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${selectedOption === 1 ? 70 : selectedOption === 2 ? 60 : 50}%` }}></div>
+                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${100 - sel.def.kpi.setup}%` }}></div>
                     </div>
                   </div>
                 </div>
@@ -1132,7 +864,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                     <div className="flex justify-between items-start gap-2">
                       <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wider block">🚚 SEVK SÜRESİ (LEAD TIME)</span>
                       <span className="text-[9px] bg-blue-100 text-blue-900 font-bold px-2 py-0.5 rounded-md border border-blue-200 whitespace-nowrap">
-                        -{selectedOption === 1 ? '30%' : selectedOption === 2 ? '40%' : '50%'} Sıkıştırma
+                        -%{sel.def.kpi.leadTime} Sıkıştırma
                       </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-medium mt-1">Sipariş çevrim hızı ve nakit akış performansı</p>
@@ -1148,11 +880,11 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                     <div className="flex justify-between text-[11px] font-semibold text-slate-650 pt-0.5">
                       <span>Hedeflenen Durum</span>
                       <span className="text-emerald-700 font-extrabold">
-                        {Math.round(leadTimeNum * (selectedOption === 1 ? 0.70 : selectedOption === 2 ? 0.60 : 0.50))} Gün
+                        {Math.round(leadTimeNum * (1 - sel.def.kpi.leadTime / 100))} Gün
                       </span>
                     </div>
                     <div className="w-full h-2.5 bg-slate-200/70 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${selectedOption === 1 ? 70 : selectedOption === 2 ? 60 : 50}%` }}></div>
+                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${100 - sel.def.kpi.leadTime}%` }}></div>
                     </div>
                   </div>
                 </div>
@@ -1165,7 +897,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                     <div className="flex justify-between items-start gap-2">
                       <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wider block">📉 KALİTESİZLİK (COPQ)</span>
                       <span className="text-[9px] bg-rose-100 text-rose-900 font-bold px-2 py-0.5 rounded-md border border-rose-200 whitespace-nowrap">
-                        -{selectedOption === 1 ? '15%' : selectedOption === 2 ? '20%' : '30%'} Düşüş
+                        -%{sel.def.kpi.copq} Düşüş
                       </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-medium mt-1">Hurda, fire ve hatalı parça azaltma başarısı</p>
@@ -1181,11 +913,11 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                     <div className="flex justify-between text-[11px] font-semibold text-slate-650 pt-0.5">
                       <span>Hedeflenen Oran</span>
                       <span className="text-emerald-700 font-extrabold">
-                        %{Math.round(copqRateNum * (selectedOption === 1 ? 0.85 : selectedOption === 2 ? 0.80 : 0.70) * 10) / 10}
+                        %{Math.round(copqRateNum * (1 - sel.def.kpi.copq / 100) * 10) / 10}
                       </span>
                     </div>
                     <div className="w-full h-2.5 bg-slate-200/70 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${selectedOption === 1 ? 85 : selectedOption === 2 ? 80 : 70}%` }}></div>
+                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${100 - sel.def.kpi.copq}%` }}></div>
                     </div>
                   </div>
                 </div>
@@ -1198,7 +930,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                     <div className="flex justify-between items-start gap-2">
                       <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wider block">⚙️ MAVİ YAKA ÜRETKENLİĞİ</span>
                       <span className="text-[9px] bg-indigo-100 text-indigo-900 font-bold px-2 py-0.5 rounded-md border border-indigo-200 whitespace-nowrap">
-                        +{selectedOption === 1 ? '20%' : selectedOption === 2 ? '30%' : '35%'} Artış
+                        +%{sel.def.kpi.productivity} Artış
                       </span>
                     </div>
                     <p className="text-[10px] text-slate-500 font-medium mt-1">Standart iş ve gemba hat dengeleme çarpanı</p>
@@ -1209,16 +941,16 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                       <span className="text-slate-900 font-bold">{laborProductivity.toLocaleString('tr-TR')} {productionUnit}/Op/Yıl</span>
                     </div>
                     <div className="w-full h-2.5 bg-slate-200/70 rounded-full overflow-hidden">
-                      <div className="h-full bg-slate-500 rounded-full" style={{ width: `${(1 / 1.35) * 100}%` }}></div>
+                      <div className="h-full bg-slate-500 rounded-full" style={{ width: `${(1 / 1.25) * 100}%` }}></div>
                     </div>
                     <div className="flex justify-between text-[11px] font-semibold text-slate-650 pt-0.5">
                       <span>Hedeflenen Üretkenlik</span>
                       <span className="text-emerald-700 font-extrabold">
-                        {Math.round(laborProductivity * (selectedOption === 1 ? 1.20 : selectedOption === 2 ? 1.30 : 1.35)).toLocaleString('tr-TR')} {productionUnit}/Op
+                        {Math.round(laborProductivity * (1 + sel.def.kpi.productivity / 100)).toLocaleString('tr-TR')} {productionUnit}/Op
                       </span>
                     </div>
                     <div className="w-full h-2.5 bg-slate-200/70 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${((selectedOption === 1 ? 1.20 : selectedOption === 2 ? 1.30 : 1.35) / 1.35) * 100}%` }}></div>
+                      <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${((1 + sel.def.kpi.productivity / 100) / 1.25) * 100}%` }}></div>
                     </div>
                   </div>
                 </div>
@@ -1233,7 +965,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                       <p className="text-[10px] text-slate-500 font-medium mt-1">Kullanılabilirlik, performans ve kalite çarpımıyla makine OEE oranı</p>
                     </div>
                     <span className="text-[9px] bg-emerald-100 text-emerald-900 font-bold px-2 py-0.5 rounded-md border border-emerald-200 whitespace-nowrap">
-                      +{selectedOption === 1 ? '10%' : selectedOption === 2 ? '15%' : '18%'} Mutlak Artış
+                      +{sel.def.kpi.oeePoints} Puan Artış
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
@@ -1250,11 +982,11 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                       <div className="flex justify-between text-[11px] font-semibold text-slate-650">
                         <span>Hedeflenen OEE Oranı (TPM)</span>
                         <span className="text-emerald-700 font-extrabold">
-                          %{Math.min(98, Math.round(oeeNum + (selectedOption === 1 ? 10 : selectedOption === 2 ? 15 : 18)))} OEE
+                          %{Math.min(90, Math.round(oeeNum + sel.def.kpi.oeePoints))} OEE
                         </span>
                       </div>
                       <div className="w-full h-2.5 bg-slate-200/70 rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${Math.min(98, Math.round(oeeNum + (selectedOption === 1 ? 10 : selectedOption === 2 ? 15 : 18)))}%` }}></div>
+                        <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${Math.min(90, Math.round(oeeNum + sel.def.kpi.oeePoints))}%` }}></div>
                       </div>
                     </div>
                   </div>
@@ -1272,11 +1004,11 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                   III-B. KÜMÜLATİF NAKİT AKIŞI VE AMORTİSMAN (BREAK-EVEN) GRAFİĞİ
                 </h4>
                 <p className="text-[11px] text-slate-500 font-semibold mt-1">
-                  Seçilen Paket 0{selectedOption} Yatırımı ({currencySymbol}{activeOptionBudget.toLocaleString('tr-TR')}) ile 12 Aylık Birikimli Kâr Eğrisi
+                  {sel.def.name} Yatırımı ({currencySymbol}{activeOptionBudget.toLocaleString('tr-TR')}) ile 12 Aylık Birikimli Tasarruf Eğrisi (ilk 4 ay kademeli devreye alma)
                 </p>
               </div>
               <span className="text-[10.5px] font-mono font-black text-amber-900 bg-amber-50 px-3 py-1 rounded-xl border border-amber-200 shadow-xs self-start md:self-auto">
-                🎯 Başa Baş Noktası: {detectedBreakEvenMonth > 0 ? `${detectedBreakEvenMonth}. Ay` : 'Yıl Sonunda Amorti'}
+                🎯 Başa Baş Noktası: {detectedBreakEvenMonth > 0 ? `${detectedBreakEvenMonth}. Ay` : '36 Aydan Uzun'}
               </span>
             </div>
 
@@ -1347,22 +1079,6 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
 
           {/* 📊 MALİYET AZALTIM POTANSİYELİ GÖRSEL DASHBOARD'U */}
           {(() => {
-            const d_loss_durus = loss_durus || Math.round(totalLossExpected * 0.25);
-            const d_loss_kalite = loss_kalite || Math.round(totalLossExpected * 0.20);
-            const d_loss_mesai = loss_mesai || Math.round(totalLossExpected * 0.15);
-            const d_loss_hurda = loss_hurda || Math.round(totalLossExpected * 0.15);
-            const d_loss_iscilik = loss_iscilik || Math.round(totalLossExpected * 0.15);
-            const d_loss_kapasite = loss_kapasite || Math.max(0, totalLossExpected - (d_loss_durus + d_loss_kalite + d_loss_mesai + d_loss_hurda + d_loss_iscilik));
-
-            // Chart data array
-            const chartData = [
-              { label: 'Duruşlar', current: d_loss_durus, target: Math.round(d_loss_durus * 0.75), reduction: '-%25', tool: 'SMED & TPM', desc: 'Sürekli İyileştirme ile Arıza & Model Değişimi' },
-              { label: 'Kalite', current: d_loss_kalite, target: Math.round(d_loss_kalite * 0.75), reduction: '-%25', tool: 'Poka-Yoke & Kalite Kaizen', desc: 'Tamir ve Hatalı Parça Üretim Yükü' },
-              { label: 'Fazla Mesai', current: d_loss_mesai, target: Math.round(d_loss_mesai * 0.65), reduction: '-%35', tool: 'Hat Dengeleme & Standart İş', desc: 'Dengesiz Vardiya & Yoğun Mesai Yükü' },
-              { label: 'Hurda', current: d_loss_hurda, target: Math.round(d_loss_hurda * 0.80), reduction: '-%20', tool: 'Süreç Kontrol & Standartizasyon', desc: 'Hatalı Malzeme ve Toz/Sıvı Fireleri' },
-              { label: 'İşçilik', current: d_loss_iscilik, target: Math.round(d_loss_iscilik * 0.75), reduction: '-%25', tool: '5S & Standart İş', desc: 'Mavi Yaka Verimsizlik ve Hazırlık Kaybı' },
-              { label: 'Kapasite', current: d_loss_kapasite, target: Math.round(d_loss_kapasite * 0.70), reduction: '-%30', tool: 'OEE Takip & Darboğaz Çözümü', desc: 'Ekipman Doyum & Kullanım Kaybı' }
-            ];
 
             const maxLoss = Math.max(...chartData.map(c => c.current)) || 10000;
             const yTicks = [maxLoss, maxLoss * 0.75, maxLoss * 0.5, maxLoss * 0.25, 0];
@@ -1408,7 +1124,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                   <div className="text-right border-l border-slate-200 pl-3 flex flex-col justify-center">
                     <span className="text-slate-400 text-[9px] block uppercase leading-none mb-1">YALIN KATKI ORANI</span>
                     <strong className="text-[#2a9d8f] font-black text-xs">
-                      ~%26.5 Kayıp Reddi
+                      ~%{totalLossExpected > 0 ? Math.round(sel.gainMid / totalLossExpected * 100) : 0} Kayıp Azaltımı
                     </strong>
                   </div>
                 </div>
@@ -1518,19 +1234,6 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2 max-w-full justify-start xl:justify-end shrink">
-                <button
-                  type="button"
-                  onClick={() => setIsEditingBenchmarks(!isEditingBenchmarks)}
-                  className={`flex items-center gap-1 text-[10px] font-extrabold px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer shadow-sm whitespace-nowrap ${
-                    isEditingBenchmarks 
-                      ? 'bg-amber-500 text-white border-amber-600' 
-                      : 'bg-amber-50 text-amber-900 border-amber-200/80 hover:bg-amber-100'
-                  }`}
-                  title="Benchmark oranlarını doğrudan elle düzenleme modunu açar/kapatır"
-                >
-                  <Sliders className="w-3.5 h-3.5" />
-                  <span>{isEditingBenchmarks ? 'Tamamla' : '⚡ Benchmark Düzenle'}</span>
-                </button>
 
                 {/* Ürün ailesine göre hesapla Checkbox */}
                 <label className="flex items-center gap-1.5 cursor-pointer bg-emerald-50/40 border border-emerald-200/80 rounded-xl px-2.5 py-1.5 hover:bg-emerald-50 transition-colors shadow-sm whitespace-nowrap">
@@ -1688,361 +1391,111 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
               <span className="text-[10px] text-slate-400 font-bold">GERÇEKÇİ GERİ ÖDEME HESAPLARI</span>
             </div>
 
-            {/* Option 1 Option */}
-            <div className="bg-white rounded-2xl border border-zinc-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.02),0_4px_16px_rgba(0,0,0,0.015)] p-6 space-y-5 relative overflow-hidden transition-all duration-300 hover:shadow-[0_4px_12px_rgba(0,0,0,0.03),0_16px_32px_rgba(0,0,0,0.03)] hover:border-zinc-300/95 group">
-              <div>
-                <span className="text-[9px] font-mono font-bold tracking-widest text-zinc-400 block uppercase mb-1">PROGRAM 01</span>
-                <h5 className="font-sans font-bold text-[14px] text-zinc-900 tracking-tight flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-zinc-400 group-hover:text-zinc-900 transition-colors" />
-                  Yatırım Opsiyonu 1: Standart Gelişim Programı
-                </h5>
-                <p className="text-[11.5px] text-zinc-500 leading-relaxed font-normal mt-2">
-                  <strong>Uygulanacak Altyapı:</strong> Darboğaz alanlar üzerinde temel yalın tekniklerin uygulanması ile pilot projeler öncelikli olarak devre alınır. İsraf kaynaklarını kurutup ilk büyük verimlilik ve hız kazanımlarını sahada somutlaştırmaya odaklanır.
-                </p>
-                <div className="mt-3.5 bg-zinc-50/50 p-2.5 rounded-xl border border-zinc-150/70 flex items-center justify-between text-xs text-zinc-700">
-                  <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-400">ZİYARET FREKANSI:</span>
-                  <span className="font-bold text-zinc-800 font-mono text-[11px]">1 adam gün / hafta - 52 Adam gün / yıl</span>
-                </div>
+            {qla.affordableAlternative && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-[11.5px] text-amber-950 font-semibold">
+                ℹ️ Önerilen pakette hesaplanan geri ödeme {qla.recommended.paybackExpMonths || '∞'} ay. Kayıp havuzunu sahada doğrulayın; gerekirse <strong>{qla.affordableAlternative.def.name}</strong> ({qla.affordableAlternative.def.days} adam-gün, {qla.affordableAlternative.paybackExpMonths} ay) giriş teklifi olabilir.
               </div>
+            )}
 
-              {/* Operational Gains Breakdown */}
-              <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-150/70 space-y-2">
-                <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">ÖNGÖRÜLEN OPERASYONEL GERI KAZANIMLAR</span>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">5S &amp; Düzen: +%10 Zaman Tasarrufu</span>
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">Metrik Hizalama: +%8 Verimlilik Artışı</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 border-t border-b border-zinc-100 py-4 text-xs">
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-zinc-400 block uppercase tracking-widest mb-1">DANIŞMANLIK PROJE BÜTÇESİ (₺ TL)</span>
-                  <strong className="text-[18px] text-zinc-900 font-bold tracking-tight font-sans font-mono">₺{realOp1Budget.toLocaleString('tr-TR')} TL</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10px] font-bold text-slate-500 mt-0.5 font-mono">
-                      (~{currencySymbol}{Math.round(realOp1Budget / activeRate).toLocaleString('tr-TR')} {currency} karşılığı)
-                    </span>
+            {qla.packages.filter(p => p.def.id !== 'kocluk' || p.recommended).map((p, idx) => {
+              const isSel = sel.def.id === p.def.id;
+              const famMin = p.gainMin * familyRatio;
+              const famMax = p.gainMax * familyRatio;
+              return (
+                <div
+                  key={p.def.id}
+                  onClick={() => setSelectedPackageId && setSelectedPackageId(p.def.id)}
+                  className={`bg-white rounded-2xl ${p.recommended ? 'border-2 border-zinc-950' : 'border border-zinc-200/80'} ${isSel ? 'ring-2 ring-emerald-500/60' : ''} shadow-[0_1px_2px_rgba(0,0,0,0.02),0_4px_16px_rgba(0,0,0,0.015)] p-6 space-y-5 relative overflow-hidden transition-all duration-300 cursor-pointer group`}
+                >
+                  {p.recommended && (
+                    <div className="absolute top-0 right-0 bg-zinc-950 text-white text-[8px] font-mono font-bold tracking-widest px-3 py-1.5 rounded-bl-xl uppercase">
+                      OLGUNLUK SKORUNA GÖRE ÖNERİLEN
+                    </div>
                   )}
-                </div>
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-emerald-600 block uppercase tracking-widest mb-1">YILLIK GERİ KAZANIM ORANI (TL)</span>
-                  <strong className="text-[18px] text-emerald-600 font-bold tracking-tight font-sans font-mono">₺{Math.round(op1_min * activeRate).toLocaleString('tr-TR')} - ₺{Math.round(op1_max * activeRate).toLocaleString('tr-TR')} TL / yıl</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10.5px] font-extrabold text-slate-600 mt-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 w-max font-mono">
-                      Döviz Karşılığı: {currencySymbol}{op1_min.toLocaleString('tr-TR')} - {currencySymbol}{op1_max.toLocaleString('tr-TR')} {currency} / yıl
+                  <div>
+                    <span className={`text-[9px] font-mono font-bold tracking-widest block uppercase mb-1 ${p.recommended ? 'text-red-500' : 'text-zinc-400'}`}>
+                      PROGRAM 0{idx + 1}{isSel ? ' — GÖRÜNTÜLENEN' : ''}
                     </span>
-                  )}
-                  {useProductFamilyRecovery && (
-                    <span className="block text-[10.5px] font-extrabold text-sky-600 mt-1 bg-sky-50 px-2 py-0.5 rounded border border-sky-100/50 w-max">
-                      Ürün Grubu: ₺{Math.round(op1_min * familyRatio * activeRate).toLocaleString('tr-TR')} - ₺{Math.round(op1_max * familyRatio * activeRate).toLocaleString('tr-TR')} TL
-                    </span>
-                  )}
-                </div>
-              </div>
-              
-              {/* Real Paybacks */}
-              <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-200/80 space-y-2 text-xs">
-                <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">GERİ ÖDEME SENARYOLARI (ROI PAYBACK)</span>
-                <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
-                  <div className="bg-white p-2.5 rounded-lg border border-zinc-150 flex flex-col items-center justify-center">
-                    <span className="text-zinc-400 block text-[9px] uppercase tracking-wider font-mono mb-1">Yavaş</span>
-                    <strong className="text-[13px] font-bold text-zinc-800 font-mono">
-                      {op1_min > 0 ? Math.max(1, Math.round((realOp1Budget / (op1_min * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
+                    <h5 className="font-sans font-bold text-[14px] text-zinc-900 tracking-tight flex items-center gap-2 pr-24">
+                      <CheckCircle2 className={`w-4 h-4 ${p.recommended ? 'text-red-500' : 'text-zinc-400'}`} />
+                      {p.def.name}
+                    </h5>
+                    <p className="text-[11.5px] text-zinc-500 leading-relaxed font-normal mt-2">
+                      <strong>Odak:</strong> {p.def.focus}
+                    </p>
+                    <div className="mt-3.5 bg-zinc-50/50 p-2.5 rounded-xl border border-zinc-150/70 flex items-center justify-between text-xs text-zinc-700">
+                      <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-400">KAPSAM:</span>
+                      <span className="font-bold text-zinc-800 font-mono text-[11px]">{p.def.days} Adam gün / yıl</span>
+                    </div>
                   </div>
-                  <div className="bg-zinc-900 border border-zinc-900 text-white p-2.5 rounded-lg shadow-sm flex flex-col items-center justify-center">
-                    <span className="text-zinc-350 block text-[9px] uppercase tracking-wider font-mono mb-1">Beklenen</span>
-                    <strong className="text-[14px] font-black text-white font-mono">
-                      {op1_min > 0 ? Math.max(1, Math.round((realOp1Budget / (((op1_min + op1_max) / 2) * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
+
+                  <div className="grid grid-cols-2 gap-4 border-t border-b border-zinc-100 py-4 text-xs">
+                    <div>
+                      <span className="text-[9px] font-mono font-bold text-zinc-400 block uppercase tracking-widest mb-1">DANIŞMANLIK PROJE BÜTÇESİ</span>
+                      <strong className="text-[18px] text-zinc-900 font-bold tracking-tight font-mono">{currencySymbol}{p.budget.toLocaleString('tr-TR')}</strong>
+                      {currency !== 'TRY' && (
+                        <span className="block text-[10px] font-bold text-slate-500 mt-0.5 font-mono">(~₺{Math.round(p.budget * activeRate).toLocaleString('tr-TR')} TL)</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-mono font-bold text-emerald-600 block uppercase tracking-widest mb-1">YILLIK GERİ KAZANIM (HAVUZUN %{Math.round(p.def.recovery[0] * 100)}-{Math.round(p.def.recovery[1] * 100)}'i)</span>
+                      <strong className="text-[18px] text-emerald-600 font-bold tracking-tight font-mono">{currencySymbol}{p.gainMin.toLocaleString('tr-TR')} - {currencySymbol}{p.gainMax.toLocaleString('tr-TR')} / yıl</strong>
+                      {currency !== 'TRY' && (
+                        <span className="block text-[10px] font-bold text-slate-500 mt-0.5 font-mono">(~₺{Math.round(p.gainMin * activeRate).toLocaleString('tr-TR')} - ₺{Math.round(p.gainMax * activeRate).toLocaleString('tr-TR')} TL)</span>
+                      )}
+                      {useProductFamilyRecovery && (
+                        <span className="block text-[10.5px] font-extrabold text-sky-600 mt-1 bg-sky-50 px-2 py-0.5 rounded border border-sky-100/50 w-max">
+                          Ürün Grubu: {currencySymbol}{Math.round(famMin).toLocaleString('tr-TR')} - {currencySymbol}{Math.round(famMax).toLocaleString('tr-TR')}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="bg-emerald-500/5 p-2.5 rounded-lg border border-emerald-500/20 flex flex-col items-center justify-center">
-                    <span className="text-emerald-700 block text-[9px] uppercase tracking-wider font-mono mb-1">Hızlı</span>
-                    <strong className="text-[13px] font-black text-emerald-950 font-mono">
-                      {op1_max > 0 ? Math.max(1, Math.round((realOp1Budget / (op1_max * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
+
+                  <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-200/80 space-y-2 text-xs">
+                    <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">GERİ ÖDEME SENARYOLARI (ROI PAYBACK)</span>
+                    <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                      <div className="bg-white p-2.5 rounded-lg border border-zinc-150 flex flex-col items-center justify-center">
+                        <span className="text-zinc-400 block text-[9px] uppercase tracking-wider font-mono mb-1">Yavaş</span>
+                        <strong className="text-[13px] font-bold text-zinc-800 font-mono">{p.paybackSlowMonths} Ay</strong>
+                      </div>
+                      <div className="bg-zinc-900 border border-zinc-900 text-white p-2.5 rounded-lg shadow-sm flex flex-col items-center justify-center">
+                        <span className="text-zinc-350 block text-[9px] uppercase tracking-wider font-mono mb-1">Beklenen</span>
+                        <strong className="text-[14px] font-black text-white font-mono">{p.paybackExpMonths} Ay</strong>
+                      </div>
+                      <div className="bg-emerald-500/5 p-2.5 rounded-lg border border-emerald-500/20 flex flex-col items-center justify-center">
+                        <span className="text-emerald-700 block text-[9px] uppercase tracking-wider font-mono mb-1">Hızlı</span>
+                        <strong className="text-[13px] font-black text-emerald-950 font-mono">{p.paybackFastMonths} Ay</strong>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              {/* Graphical Payback & ROI comparison bar chart */}
-              <MiniOptionChart
-                budget={realOp1Budget}
-                minGain={op1_min}
-                maxGain={op1_max}
-                currencySymbol={currencySymbol}
-                themeColor="slate"
-                useProductFamilyRecovery={useProductFamilyRecovery}
-                productRatio={familyRatio}
-              />
-            </div>
-
-            {/* Option 2 Option */}
-            <div className="bg-white rounded-2xl border-2 border-zinc-950 shadow-[0_1px_3px_rgba(0,0,0,0.05),0_10px_30px_rgba(0,0,0,0.04)] p-6 space-y-5 relative overflow-hidden transition-all duration-300 hover:shadow-[0_4px_16px_rgba(0,0,0,0.08),0_24px_48px_rgba(0,0,0,0.06)] group">
-              <div className="absolute top-0 right-0 bg-zinc-950 text-white text-[8px] font-mono font-bold tracking-widest px-3 py-1.5 rounded-bl-xl uppercase">
-                 C-LEVEL TAVSİYESİ
-              </div>
-              <div>
-                <span className="text-[9px] font-mono font-bold tracking-widest text-red-500 block uppercase mb-1">PROGRAM 02 — TAVSİYE EDİLEN</span>
-                <h5 className="font-sans font-bold text-[14px] text-zinc-900 tracking-tight flex items-center gap-2 pr-24">
-                  <CheckCircle2 className="w-4 h-4 text-red-500" />
-                  Yatırım Opsiyonu 2: Hızlandırılmış Program
-                </h5>
-                <p className="text-[11.5px] text-zinc-500 leading-relaxed font-normal mt-2">
-                  <strong>Uygulanacak Altyapı:</strong> Değer Akış Haritalama (VSM), SMED Hızlı Kalıp Değişim Metotları, Hücresel İmalat Akış Tasarımları, Hat Dengeleme Analizleri öncelikli olarak devreye alınır. Temel saha yönetim çalışmalarına ağırlık verilir. Akış hızını katlayarak teslim sürelerini ve israfları radikal seviyede aşağı çeker.
-                </p>
-                <div className="mt-3.5 bg-red-550/[0.03] p-2.5 rounded-xl border border-red-500/10 flex items-center justify-between text-xs text-red-950">
-                  <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-red-800">ZİYARET FREKANSI:</span>
-                  <span className="font-bold text-red-900 font-mono text-[11px]">2 adam gün / hafta - 104 Adam gün / yıl</span>
-                </div>
-              </div>
-
-              {/* Operational Gains Breakdown */}
-              <div className="bg-[#EF4444]/[0.015] p-3.5 rounded-xl border border-red-500/10 space-y-2">
-                <span className="text-[9px] font-mono font-bold text-red-800 uppercase tracking-widest block">ÖNGÖRÜLEN OPERASYONEL GERI KAZANIMLAR</span>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="bg-white border border-red-500/10 text-red-950 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">SMED Kalıp Değişim: +%15 Kapasite</span>
-                  <span className="bg-white border border-red-500/10 text-red-950 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">Hücresel Tasarım: -%50 Lead Time</span>
-                  <span className="bg-white border border-red-500/10 text-red-950 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">Hat Dengeleme: +%12 İşçilik Verimi</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 border-t border-b border-zinc-100 py-4 text-xs">
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-zinc-400 block uppercase tracking-widest mb-1">DANIŞMANLIK PROJE BÜTÇESİ (₺ TL)</span>
-                  <strong className="text-[18px] text-zinc-900 font-bold tracking-tight font-sans font-mono">₺{realOp2Budget.toLocaleString('tr-TR')} TL</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10px] font-bold text-slate-500 mt-0.5 font-mono">
-                      (~{currencySymbol}{Math.round(realOp2Budget / activeRate).toLocaleString('tr-TR')} {currency} karşılığı)
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-emerald-600 block uppercase tracking-widest mb-1">YILLIK GERİ KAZANIM ORANI (TL)</span>
-                  <strong className="text-[18px] text-emerald-600 font-bold tracking-tight font-sans font-mono">₺{Math.round(op2_min * activeRate).toLocaleString('tr-TR')} - ₺{Math.round(op2_max * activeRate).toLocaleString('tr-TR')} TL / yıl</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10.5px] font-extrabold text-slate-600 mt-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 w-max font-mono">
-                      Döviz Karşılığı: {currencySymbol}{op2_min.toLocaleString('tr-TR')} - {currencySymbol}{op2_max.toLocaleString('tr-TR')} {currency} / yıl
-                    </span>
-                  )}
-                  {useProductFamilyRecovery && (
-                    <span className="block text-[10.5px] font-extrabold text-sky-650 mt-1 bg-sky-50 px-2 py-0.5 rounded border border-sky-100/50 w-max">
-                      Ürün Grubu: ₺{Math.round(op2_min * familyRatio * activeRate).toLocaleString('tr-TR')} - ₺{Math.round(op2_max * familyRatio * activeRate).toLocaleString('tr-TR')} TL
-                    </span>
-                  )}
-                </div>
-              </div>
-              
-              {/* Real Paybacks */}
-              <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-200/80 space-y-2 text-xs">
-                <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">GERİ ÖDEME SENARYOLARI (ROI PAYBACK)</span>
-                <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
-                  <div className="bg-white p-2.5 rounded-lg border border-zinc-150 flex flex-col items-center justify-center">
-                    <span className="text-zinc-400 block text-[9px] uppercase tracking-wider font-mono mb-1">Yavaş</span>
-                    <strong className="text-[13px] font-bold text-zinc-800 font-mono">
-                      {op2_min > 0 ? Math.max(1, Math.round((realOp2Budget / (op2_min * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
+                  <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                    <div className="bg-white p-2 rounded-lg border border-zinc-150">
+                      <span className="text-zinc-400 block text-[9px] uppercase tracking-wider font-mono mb-0.5">1. Yıl Kazanç</span>
+                      <strong className="font-mono text-zinc-900">{currencySymbol}{p.year1Gain.toLocaleString('tr-TR')}</strong>
+                    </div>
+                    <div className="bg-white p-2 rounded-lg border border-zinc-150">
+                      <span className="text-zinc-400 block text-[9px] uppercase tracking-wider font-mono mb-0.5">{qla.sustainYears} Yıl Toplam</span>
+                      <strong className="font-mono text-emerald-700">{currencySymbol}{p.cumulativeGain.toLocaleString('tr-TR')}</strong>
+                    </div>
+                    <div className="p-2 rounded-lg border bg-white border-zinc-150" title="Benzer projelerde ortalama gerçekleşen süre; sektöre ve ürün yapısına göre değişir, hedef değildir.">
+                      <span className="text-zinc-500 block text-[9px] uppercase tracking-wider font-mono mb-0.5">Ort. Gerçekleşen {p.def.avgPayback[0]}–{p.def.avgPayback[1]} Ay</span>
+                      <strong className="font-mono text-zinc-900">{p.roiMultiple}x · {p.paybackVsAvg === 'daha-hizli' ? 'Ortalamadan hızlı' : p.paybackVsAvg === 'ortalama' ? 'Ortalama aralıkta' : 'Ortalamadan uzun'}</strong>
+                    </div>
                   </div>
-                  <div className="bg-zinc-900 border border-zinc-900 text-white p-2.5 rounded-lg shadow-sm flex flex-col items-center justify-center">
-                    <span className="text-zinc-350 block text-[9px] uppercase tracking-wider font-mono mb-1">Beklenen</span>
-                    <strong className="text-[14px] font-black text-white font-mono">
-                      {op2_min > 0 ? Math.max(1, Math.round((realOp2Budget / (((op2_min + op2_max) / 2) * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                  <div className="bg-emerald-500/5 p-2.5 rounded-lg border border-emerald-500/20 flex flex-col items-center justify-center">
-                    <span className="text-emerald-700 block text-[9px] uppercase tracking-wider font-mono mb-1">Hızlı</span>
-                    <strong className="text-[13px] font-black text-emerald-950 font-mono">
-                      {op2_max > 0 ? Math.max(1, Math.round((realOp2Budget / (op2_max * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                </div>
-              </div>
 
-              {/* Graphical Payback & ROI comparison bar chart */}
-              <MiniOptionChart
-                budget={realOp2Budget}
-                minGain={op2_min}
-                maxGain={op2_max}
-                currencySymbol={currencySymbol}
-                themeColor="red"
-                useProductFamilyRecovery={useProductFamilyRecovery}
-                productRatio={familyRatio}
-              />
-
-              {/* Dynamic Explanation Note for Option 2 */}
-              <div className="mt-3 p-3 rounded-xl bg-orange-50/60 border border-orange-100 text-[10px] text-orange-900 leading-relaxed font-semibold">
-                <span className="font-bold flex items-center gap-1.5 text-orange-850 uppercase text-[9px] tracking-wider mb-1">
-                  ⚠️ MODEL UYUMLULUK VE SİSTEMİK ÇARPAN BİLGİLENDİRMESİ:
-                </span>
-                Hızlandırılmış Program (%42 net iyileşme ve ₺{netFinancialGain.toLocaleString('tr-TR')}/yıl tasarruf) hedefimiz, en muhafazakar düzeyde sınırlandırılmış doğrudan fiziksel ve operasyonel duruşların (Matris IV tabanındaki azami ₺{Math.round(total_economic_max).toLocaleString('tr-TR')} doğrudan fırsat) ötesindedir. 2 adam-gün/haftalık aktif danışmanlık rehberliğiyle hayata geçirilecek organizasyonel entegrasyonlar; <strong>lead-time kısaltmasının sağladığı işletme sermayesi/stok kazanımı, SMED ile açığa çıkan kapasitenin ciro ve rekabet fırsatlarına dönüştürülmesi ile mavi-yaka motivasyonel/koordinasyonel sinerjileri gibi daha geniş kapsamlı sistemik kaldıraçları</strong> harekete geçirir. Bu bilinçli çarpan etkisi, doğrudan tespit edilen fiziksel kayıp sınırlarının üzerinde bir ek finansal değer katmaktadır.
-              </div>
-            </div>
-
-            {/* Option 3 Option */}
-            <div className="bg-white rounded-2xl border border-zinc-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.02),0_4px_16px_rgba(0,0,0,0.015)] p-6 space-y-5 relative overflow-hidden transition-all duration-300 hover:shadow-[0_4px_12px_rgba(0,0,0,0.03),0_16px_32px_rgba(0,0,0,0.03)] hover:border-zinc-300/95 group">
-              <div>
-                <span className="text-[9px] font-mono font-bold tracking-widest text-zinc-400 block uppercase mb-1">PROGRAM 03</span>
-                <h5 className="font-sans font-bold text-[14px] text-zinc-900 tracking-tight flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-zinc-400 group-hover:text-zinc-900 transition-colors" />
-                  Yatırım Opsiyonu 3: Dönüşüm Liderliği Programı
-                </h5>
-                <p className="text-[11.5px] text-zinc-500 leading-relaxed font-normal mt-2">
-                  <strong>Uygulanacak Altyapı:</strong> Akış Çalışmaları ve Darboğaz yönetimi ile birlikte sürecin tüm alanlara yaygınlaştırılması sağlanır. Saha yöneticilerinin Liderliği Ön plana alınır. Kurumsal sahiplenmeyi geliştirerek kazanımların kalıcı ve sürdürülebilir bir kültüre dönüşmesini garanti altına alır.
-                </p>
-                <div className="mt-3.5 bg-zinc-50/50 p-2.5 rounded-xl border border-zinc-150/70 flex items-center justify-between text-xs text-zinc-700">
-                  <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-400">ZİYARET FREKANSI:</span>
-                  <span className="font-bold text-zinc-800 font-mono text-[11px]">3 adam gün / hafta - 156 Adam gün / yıl</span>
+                  <MiniOptionChart
+                    budget={p.budget}
+                    minGain={p.gainMin}
+                    maxGain={p.gainMax}
+                    currencySymbol={currencySymbol}
+                    themeColor={p.recommended ? 'red' : 'slate'}
+                    useProductFamilyRecovery={useProductFamilyRecovery}
+                    productRatio={familyRatio}
+                  />
                 </div>
-              </div>
-
-              {/* Operational Gains Breakdown */}
-              <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-150/70 space-y-2">
-                <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">ÖNGÖRÜLEN OPERASYONEL GERI KAZANIMLAR</span>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">Otonom Bakım: +%25 Ekipman Ömrü</span>
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">Dijital OEE: +%25 Reaksiyon Hızı</span>
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.015)]">Poka-Yoke: +%18 Hurda İyileşmesi</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 border-t border-b border-zinc-100 py-4 text-xs">
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-zinc-400 block uppercase tracking-widest mb-1">DANIŞMANLIK PROJE BÜTÇESİ (₺ TL)</span>
-                  <strong className="text-[18px] text-zinc-900 font-bold tracking-tight font-sans font-mono">₺{realOp3Budget.toLocaleString('tr-TR')} TL</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10px] font-bold text-slate-500 mt-0.5 font-mono">
-                      (~{currencySymbol}{Math.round(realOp3Budget / activeRate).toLocaleString('tr-TR')} {currency} karşılığı)
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-emerald-600 block uppercase tracking-widest mb-1">YILLIK GERİ KAZANIM ORANI (TL)</span>
-                  <strong className="text-[18px] text-emerald-600 font-bold tracking-tight font-sans font-mono">₺{Math.round(op3_min * activeRate).toLocaleString('tr-TR')} - ₺{Math.round(op3_max * activeRate).toLocaleString('tr-TR')} TL / yıl</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10.5px] font-extrabold text-slate-600 mt-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 w-max font-mono">
-                      Döviz Karşılığı: {currencySymbol}{op3_min.toLocaleString('tr-TR')} - {currencySymbol}{op3_max.toLocaleString('tr-TR')} {currency} / yıl
-                    </span>
-                  )}
-                </div>
-              </div>
-              
-              {/* Real Paybacks */}
-              <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-200/80 space-y-2 text-xs">
-                <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">GERİ ÖDEME SENARYOLARI (ROI PAYBACK)</span>
-                <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
-                  <div className="bg-white p-2.5 rounded-lg border border-zinc-150 flex flex-col items-center justify-center">
-                    <span className="text-zinc-400 block text-[9px] uppercase tracking-wider font-mono mb-1">Yavaş</span>
-                    <strong className="text-[13px] font-bold text-zinc-800 font-mono">
-                      {op3_min > 0 ? Math.max(1, Math.round((realOp3Budget / (op3_min * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                  <div className="bg-zinc-900 border border-zinc-900 text-white p-2.5 rounded-lg shadow-sm flex flex-col items-center justify-center">
-                    <span className="text-zinc-350 block text-[9px] uppercase tracking-wider font-mono mb-1">Beklenen</span>
-                    <strong className="text-[14px] font-black text-white font-mono">
-                      {op3_min > 0 ? Math.max(1, Math.round((realOp3Budget / (((op3_min + op3_max) / 2) * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                  <div className="bg-emerald-500/5 p-2.5 rounded-lg border border-emerald-500/20 flex flex-col items-center justify-center">
-                    <span className="text-emerald-700 block text-[9px] uppercase tracking-wider font-mono mb-1">Hızlı</span>
-                    <strong className="text-[13px] font-black text-emerald-950 font-mono">
-                      {op3_max > 0 ? Math.max(1, Math.round((realOp3Budget / (op3_max * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Graphical Payback & ROI comparison bar chart */}
-              <MiniOptionChart
-                budget={realOp3Budget}
-                minGain={op3_min}
-                maxGain={op3_max}
-                currencySymbol={currencySymbol}
-                themeColor="blue"
-              />
-            </div>
-
-            {/* Option 4 Option */}
-            <div className="bg-white rounded-2xl border border-zinc-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.02),0_4px_16px_rgba(0,0,0,0.015)] p-6 space-y-5 relative overflow-hidden transition-all duration-300 hover:shadow-[0_4px_12px_rgba(0,0,0,0.03),0_16px_32px_rgba(0,0,0,0.03)] hover:border-zinc-300/95 group">
-              <div>
-                <span className="text-[9px] font-mono font-bold tracking-widest text-zinc-400 block uppercase mb-1">PROGRAM 04</span>
-                <h5 className="font-sans font-bold text-[14px] text-zinc-900 tracking-tight flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-zinc-400 group-hover:text-zinc-900 transition-colors" />
-                  Yatırım Opsiyonu 4: Operasyonel Mükemmellik Programı
-                </h5>
-                <p className="text-[11.5px] text-zinc-500 leading-relaxed font-normal mt-2">
-                  <strong>Uygulanacak Altyapı:</strong> Operasyon sahası öncelikli olmak üzere, operasyona etki eden direk ve endirek süreçlerin tamamını kapsayan, üst yönetim ile birlikte mükemmel süreçler oluşturmaya odaklanılır. Uçtan uca tüm değer zincirini kusursuzlaştırarak küresel düzeyde yüksek rekabetçi standartlar kurar.
-                </p>
-                <div className="mt-3.5 bg-zinc-50/50 p-2.5 rounded-xl border border-zinc-150/70 flex items-center justify-between text-xs text-zinc-700">
-                  <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-zinc-400">ZİYARET FREKANSI:</span>
-                  <span className="font-bold text-zinc-800 font-mono text-[11px]">4 adam gün / hafta - 208 Adam gün / yıl</span>
-                </div>
-              </div>
-
-              {/* Operational Gains Breakdown */}
-              <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-150/70 space-y-2">
-                <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">ÖNGÖRÜLEN OPERASYONEL GERI KAZANIMLAR</span>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">Jidoka &amp; Kalite: +%30 Seviye Artışı</span>
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.015)]">Akış Kararlılığı: -%65 Lead Time</span>
-                  <span className="bg-white border border-zinc-150 text-zinc-800 text-[10px] px-2.5 py-1 rounded-md font-mono font-medium shadow-[0_1px_1px_rgba(0,0,0,0.01)]">Sıfır Hata: +%22 Hurda İyileşmesi</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 border-t border-b border-zinc-100 py-4 text-xs">
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-zinc-400 block uppercase tracking-widest mb-1">DANIŞMANLIK PROJE BÜTÇESİ (₺ TL)</span>
-                  <strong className="text-[18px] text-zinc-900 font-bold tracking-tight font-sans font-mono">₺{realOp4Budget.toLocaleString('tr-TR')} TL</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10px] font-bold text-slate-500 mt-0.5 font-mono">
-                      (~{currencySymbol}{Math.round(realOp4Budget / activeRate).toLocaleString('tr-TR')} {currency} karşılığı)
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <span className="text-[9px] font-mono font-bold text-emerald-600 block uppercase tracking-widest mb-1">YILLIK GERİ KAZANIM ORANI (TL)</span>
-                  <strong className="text-[18px] text-emerald-600 font-bold tracking-tight font-sans font-mono">₺{Math.round(op4_min * activeRate).toLocaleString('tr-TR')} - ₺{Math.round(op4_max * activeRate).toLocaleString('tr-TR')} TL / yıl</strong>
-                  {currency !== 'TRY' && (
-                    <span className="block text-[10.5px] font-extrabold text-slate-600 mt-1 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 w-max font-mono">
-                      Döviz Karşılığı: {currencySymbol}{op4_min.toLocaleString('tr-TR')} - {currencySymbol}{op4_max.toLocaleString('tr-TR')} {currency} / yıl
-                    </span>
-                  )}
-                </div>
-              </div>
-              
-              {/* Real Paybacks */}
-              <div className="bg-zinc-50/50 p-3.5 rounded-xl border border-zinc-200/80 space-y-2 text-xs">
-                <span className="text-[9px] font-mono font-bold text-zinc-400 uppercase tracking-widest block">GERİ ÖDEME SENARYOLARI (ROI PAYBACK)</span>
-                <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
-                  <div className="bg-white p-2.5 rounded-lg border border-zinc-150 flex flex-col items-center justify-center">
-                    <span className="text-zinc-400 block text-[9px] uppercase tracking-wider font-mono mb-1">Yavaş</span>
-                    <strong className="text-[13px] font-bold text-zinc-800 font-mono">
-                      {op4_min > 0 ? Math.max(1, Math.round((realOp4Budget / (op4_min * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                  <div className="bg-zinc-900 border border-zinc-900 text-white p-2.5 rounded-lg shadow-sm flex flex-col items-center justify-center">
-                    <span className="text-zinc-350 block text-[9px] uppercase tracking-wider font-mono mb-1">Beklenen</span>
-                    <strong className="text-[14px] font-black text-white font-mono">
-                      {op4_min > 0 ? Math.max(1, Math.round((realOp4Budget / (((op4_min + op4_max) / 2) * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                  <div className="bg-emerald-500/5 p-2.5 rounded-lg border border-emerald-500/20 flex flex-col items-center justify-center">
-                    <span className="text-emerald-700 block text-[9px] uppercase tracking-wider font-mono mb-1">Hızlı</span>
-                    <strong className="text-[13px] font-black text-emerald-950 font-mono">
-                      {op4_max > 0 ? Math.max(1, Math.round((realOp4Budget / (op4_max * activeRate)) * 12 * 10) / 10) : 0} Ay
-                    </strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Graphical Payback & ROI comparison bar chart */}
-              <MiniOptionChart
-                budget={realOp4Budget}
-                minGain={op4_min}
-                maxGain={op4_max}
-                currencySymbol={currencySymbol}
-                themeColor="purple"
-              />
-            </div>
+              );
+            })}
 
           </div>
         </div>
@@ -2212,7 +1665,7 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
 ------------------------------------------------------------------------
 1. STRATEJİK KIYASLAMA DASHBOARD'U (ÖNCEKİ VS. SONRAKİ DURUM)
 ------------------------------------------------------------------------
-(Seçilen Simülasyon Senaryosu: Opsiyon ${selectedOption})
+(Önerilen: ${qla.recommended.def.name} ${qla.recommended.def.days} adam-gün · Görüntülenen: ${sel.def.name})
 
 ### ⏱️ TESLİM SÜRESİ (LEAD TIME) ANALİZİ
 * Mevcut Lead Time: ${leadTimeNum} Gün 
@@ -2229,45 +1682,27 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
 * Kazanım: İşçilik verimliliğinde %${prodImprovementPercent} net artış potansiyeli.
 
 ### 📉 TOPLAM MALİYET KAYIPLARI VE AZALMA POTANSİYELİ
-* Mevcut Toplam Kayıp Maliyeti: ₺${Math.round(totalLossAvg).toLocaleString('tr-TR')} TL/Yıl
-  [Mevcut] ${getAsciiBarPath(1)} (₺${Math.round(totalLossAvg).toLocaleString('tr-TR')} TL)
-* Hedeflenen Maliyet Seviyesi: ₺${targetLossCost.toLocaleString('tr-TR')} TL/Yıl (Kayıpların %${lossReductionPercent} azaltılması ile)
-  [Hedef]  ${getAsciiBarPath(targetLossRatio)} (₺${targetLossCost.toLocaleString('tr-TR')} TL)
-* Yıllık Net Finansal Kazanç: ₺${netFinancialGain.toLocaleString('tr-TR')} TL işletmenizde kalacaktır.
+* Mevcut Toplam Kayıp Maliyeti: ${currencySymbol}${Math.round(totalLossAvg).toLocaleString('tr-TR')}/Yıl
+  [Mevcut] ${getAsciiBarPath(1)} (${currencySymbol}${Math.round(totalLossAvg).toLocaleString('tr-TR')})
+* Hedeflenen Maliyet Seviyesi: ${currencySymbol}${targetLossCost.toLocaleString('tr-TR')}/Yıl (Kayıpların %${lossReductionPercent} azaltılması ile)
+  [Hedef]  ${getAsciiBarPath(targetLossRatio)} (${currencySymbol}${targetLossCost.toLocaleString('tr-TR')})
+* Yıllık Net Finansal Kazanç: ${currencySymbol}${netFinancialGain.toLocaleString('tr-TR')} işletmenizde kalacaktır.
 
 ------------------------------------------------------------------------
 2. DETAYLI MALİYET KAYIP PARAMETRELERİ (Mevcut Durum)
 ------------------------------------------------------------------------
-- Kalitesizlik & Hurda Kaybı (Beklenen): ₺${Math.round(copqLossMin * 1.25).toLocaleString('tr-TR')} / Yıl
-- Model Değişimi Setup Duruş Kaybı (Beklenen): ₺${Math.round(setupLaborLoss + setupOpportunityLoss * 0.60).toLocaleString('tr-TR')} / Yıl
-- Verimsizlik & Duruş Kaybı (Beklenen): ₺${Math.round(inefficiencyLaborLoss + inefficiencyOverheadLoss * 0.50).toLocaleString('tr-TR')} / Yıl
-- MUHAFAZAKAR SENARYO TOPLAM KAYIP: ₺${totalLossConservative.toLocaleString('tr-TR')} / Yıl
-- BEKLENEN SENARYO TOPLAM KAYIP:    ₺${totalLossExpected.toLocaleString('tr-TR')} / Yıl
-- ÜST POTANSİYEL SENARYO TOPLAM KAYIP: ₺${totalLossHigh.toLocaleString('tr-TR')} / Yıl
-- AYLIK NAKİT KAYIP ORTALAMASI: ₺${Math.round(totalLossExpected / 12).toLocaleString('tr-TR')} / Ay
+${qla.losses.map(l => `- ${l.label}: ${l.hasData ? `${currencySymbol}${l.amount.toLocaleString('tr-TR')} / Yıl` : 'Veri yok'}`).join('\n')}
+- TOPLAM KAYIP HAVUZU: ${currencySymbol}${totalLossExpected.toLocaleString('tr-TR')} / Yıl (cironun %${qla.lossPctOfTurnover}'i)
+- ±%20 BANT: ${currencySymbol}${totalLossConservative.toLocaleString('tr-TR')} - ${currencySymbol}${totalLossHigh.toLocaleString('tr-TR')} / Yıl
 
 ------------------------------------------------------------------------
 3. YALIN YOL HARİTASI ROI DÖNÜŞ ORANLARI
 ------------------------------------------------------------------------
-[Opsiyon 1: Standart Gelişim Programı - 1 Adam-Gün/Hafta]
-- Proje Yatırım Bütçesi: ₺${realOp1Budget.toLocaleString('tr-TR')}
-- Yıllık İyileşme Kazanımı: ₺${Math.round(totalLossAvg * 0.18).toLocaleString('tr-TR')}
-- ROI Ödeme Süresi: ${totalLossAvg > 0 ? Math.max(0.5, Math.round((realOp1Budget / (totalLossAvg * 0.18)) * 12 * 10) / 10) : 0} Ay
-
-[Opsiyon 2: Hızlandırılmış Program - 2 Adam-Gün/Hafta]
-- Proje İndirimli Bütçesi: ₺${realOp2Budget.toLocaleString('tr-TR')}
-- Yıllık İyileşme Kazanımı: ₺${Math.round(totalLossAvg * 0.42).toLocaleString('tr-TR')}
-- ROI Ödeme Süresi: ${totalLossAvg > 0 ? Math.max(0.5, Math.round((realOp2Budget / (totalLossAvg * 0.42)) * 12 * 10) / 10) : 0} Ay
-
-[Opsiyon 3: Dönüşüm Liderliği Programı - 3 Adam-Gün/Hafta]
-- Proje Yatırım Bütçesi: ₺${realOp3Budget.toLocaleString('tr-TR')}
-- Yıllık İyileşme Kazanımı: ₺${Math.round(totalLossAvg * 0.68).toLocaleString('tr-TR')}
-- ROI Ödeme Süresi: ${totalLossAvg > 0 ? Math.max(0.5, Math.round((realOp3Budget / (totalLossAvg * 0.68)) * 12 * 10) / 10) : 0} Ay
-
-[Opsiyon 4: Operasyonel Mükemmellik Programı - 4 Adam-Gün/Hafta]
-- Proje Prototip Bütçesi: ₺${realOp4Budget.toLocaleString('tr-TR')}
-- Yıllık İyileşme Kazanımı: ₺${Math.round(totalLossAvg * 0.82).toLocaleString('tr-TR')}
-- ROI Ödeme Süresi: ${totalLossAvg > 0 ? Math.max(0.5, Math.round((realOp4Budget / (totalLossAvg * 0.82)) * 12 * 10) / 10) : 0} Ay
+${qla.packages.map(p => `[${p.def.name} - ${p.def.days} Adam-Gün${p.recommended ? ' - ÖNERİLEN' : ''}]
+- Proje Bütçesi: ${currencySymbol}${p.budget.toLocaleString('tr-TR')}
+- Yıllık Geri Kazanım: ${currencySymbol}${p.gainMin.toLocaleString('tr-TR')} - ${currencySymbol}${p.gainMax.toLocaleString('tr-TR')}
+- Geri Ödeme: ${p.paybackExpMonths} Ay (aralık ${p.paybackFastMonths} - ${p.paybackSlowMonths} Ay, benzer projelerde ortalama ${p.def.avgPayback[0]}-${p.def.avgPayback[1]} Ay)
+- 1. Yıl Kazanç: ${currencySymbol}${p.year1Gain.toLocaleString('tr-TR')} · ${qla.sustainYears} Yıl Toplam: ${currencySymbol}${p.cumulativeGain.toLocaleString('tr-TR')} (${p.roiMultiple}x)`).join('\n\n')}
 ========================================================================
                 `;
                 navigator.clipboard.writeText(textObj.trim()).then(() => {
@@ -2293,21 +1728,6 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
 
       {/* ─── MODAL: IV-A. MALİYET AZALTIM POTANSİYELİ GÖRSEL DASHBOARD'U EKRAN GENİŞLETME ─── */}
       {isDashboardExpanded && (() => {
-        const d_loss_durus = loss_durus || Math.round(totalLossExpected * 0.25);
-        const d_loss_kalite = loss_kalite || Math.round(totalLossExpected * 0.20);
-        const d_loss_mesai = loss_mesai || Math.round(totalLossExpected * 0.15);
-        const d_loss_hurda = loss_hurda || Math.round(totalLossExpected * 0.15);
-        const d_loss_iscilik = loss_iscilik || Math.round(totalLossExpected * 0.15);
-        const d_loss_kapasite = loss_kapasite || Math.max(0, totalLossExpected - (d_loss_durus + d_loss_kalite + d_loss_mesai + d_loss_hurda + d_loss_iscilik));
-
-        const chartData = [
-          { label: 'Duruşlar', current: d_loss_durus, target: Math.round(d_loss_durus * 0.75), reduction: '-%25', tool: 'SMED & TPM', desc: 'Sürekli İyileştirme ile Arıza & Model Değişimi' },
-          { label: 'Kalite', current: d_loss_kalite, target: Math.round(d_loss_kalite * 0.75), reduction: '-%25', tool: 'Poka-Yoke & Kalite Kaizen', desc: 'Tamir ve Hatalı Parça Üretim Yükü' },
-          { label: 'Fazla Mesai', current: d_loss_mesai, target: Math.round(d_loss_mesai * 0.65), reduction: '-%35', tool: 'Hat Dengeleme & Standart İş', desc: 'Dengesiz Vardiya & Yoğun Mesai Yükü' },
-          { label: 'Hurda', current: d_loss_hurda, target: Math.round(d_loss_hurda * 0.80), reduction: '-%20', tool: 'Süreç Kontrol & Standartizasyon', desc: 'Hatalı Malzeme ve Toz/Sıvı Fireleri' },
-          { label: 'İşçilik', current: d_loss_iscilik, target: Math.round(d_loss_iscilik * 0.75), reduction: '-%25', tool: '5S & Standart İş', desc: 'Mavi Yaka Verimsizlik ve Hazırlık Kaybı' },
-          { label: 'Kapasite', current: d_loss_kapasite, target: Math.round(d_loss_kapasite * 0.70), reduction: '-%30', tool: 'OEE Takip & Darboğaz Çözümü', desc: 'Ekipman Doyum & Kullanım Kaybı' }
-        ];
 
         const maxLoss = Math.max(...chartData.map(c => c.current)) || 10000;
         const yTicks = [maxLoss, maxLoss * 0.75, maxLoss * 0.5, maxLoss * 0.25, 0];
@@ -2369,7 +1789,7 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
                   <div className="text-center sm:text-right border-t sm:border-t-0 sm:border-l border-slate-200 pt-2 sm:pt-0 sm:pl-4 flex flex-col justify-center">
                     <span className="text-slate-400 text-[10px] block uppercase tracking-wider font-extrabold mb-1">PROJE GENELİ ORTALAMA KAYIP AZALTIMI</span>
                     <strong className="text-[#2a9d8f] font-black text-sm">
-                      ~%26.5 Net Kayıp Reddi ve Finansal Koruma
+                      ~%{totalLossExpected > 0 ? Math.round(sel.gainMid / totalLossExpected * 100) : 0} Net Kayıp Azaltımı ({shortName(sel.def.name)})
                     </strong>
                   </div>
                 </div>
@@ -2536,6 +1956,20 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
               </div>
             </div>
 
+            {/* C-Level yönlendirmeli sunum akışı */}
+            <ExecutivePitchGuide
+              qla={qla}
+              firmaAdi={firmaAdi}
+              sektor={sektor}
+              currencySymbol={currencySymbol}
+              maturityScore={maturityScore}
+              answeredCount={answeredCount}
+              findings={pitchFindings}
+              inputs={pitchInputs}
+              costFromSector={costFromSector}
+              successRatePct={successRatePct}
+            />
+
             {/* Pitch Key Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl space-y-1">
@@ -2543,7 +1977,7 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
                 <strong className="text-2xl font-black text-red-500 font-display block">
                   {currencySymbol}{totalLossExpected.toLocaleString('tr-TR')}
                 </strong>
-                <span className="text-[10px] text-slate-400 block font-medium">COPQ + Setup + Verimsizlik</span>
+                <span className="text-[10px] text-slate-400 block font-medium">Cironun %{qla.lossPctOfTurnover}'i · {qla.losses.filter(l => l.hasData).length} kayıp kalemi</span>
               </div>
 
               <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl space-y-1">
@@ -2557,17 +1991,17 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
               <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl space-y-1">
                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Amortisman (Break-Even) Süresi</span>
                 <strong className="text-2xl font-black text-amber-400 font-display block">
-                  {detectedBreakEvenMonth > 0 ? `${detectedBreakEvenMonth}. Ay` : 'Hızlı Geri Dönüş'}
+                  {detectedBreakEvenMonth > 0 ? `${detectedBreakEvenMonth}. Ay` : '36 Aydan Uzun'}
                 </strong>
-                <span className="text-[10px] text-slate-400 block font-medium">Seçilen Paket 0{selectedOption} Yatırımı</span>
+                <span className="text-[10px] text-slate-400 block font-medium">{sel.def.name} Yatırımı</span>
               </div>
 
               <div className="bg-slate-900/90 border border-slate-800 p-5 rounded-2xl space-y-1">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Çevresel Karbon Azaltımı (ESG)</span>
+                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Proje Bütçesi</span>
                 <strong className="text-2xl font-black text-sky-400 font-display block">
-                  ~{co2Tons} Ton CO2/Yıl
+                  {currencySymbol}{sel.budget.toLocaleString('tr-TR')}
                 </strong>
-                <span className="text-[10px] text-sky-400 block font-semibold">~{treesSavedEquivalent} Ağaç Eşdeğeri</span>
+                <span className="text-[10px] text-sky-400 block font-semibold">{sel.def.days} Adam-Gün · Beklenen geri ödeme {sel.paybackExpMonths} ay</span>
               </div>
             </div>
 
@@ -2604,7 +2038,7 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
                   📈 12 AYLIK KÜMÜLATİF NAKİT AKIŞI VE AMORTİSMAN DİYAGRAMI
                 </h4>
                 <span className="text-xs font-mono text-emerald-400 font-bold bg-emerald-950 px-3 py-1 rounded-xl border border-emerald-900">
-                  Başa Baş Noktası: {detectedBreakEvenMonth > 0 ? `${detectedBreakEvenMonth}. Ay` : 'Yıl Sonunda Amorti'}
+                  Başa Baş Noktası: {detectedBreakEvenMonth > 0 ? `${detectedBreakEvenMonth}. Ay` : '36 Aydan Uzun'}
                 </span>
               </div>
 
@@ -2645,49 +2079,25 @@ SEKTÖR / ŞEHİR: ${sektor || "-"} / ${adres || "-"}
 
             {/* Proposal Options Comparison Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {/* Option 1 */}
-              <div className={`p-5 rounded-2xl border transition-all ${selectedOption === 1 ? 'bg-slate-900 border-emerald-500 ring-2 ring-emerald-500/50' : 'bg-slate-900/60 border-slate-800'}`}>
-                <span className="text-[9px] font-mono font-bold text-slate-400 block uppercase">OPSİYON 01</span>
-                <h5 className="font-bold text-sm text-slate-100 mt-1">Standart Gelişim Programı</h5>
-                <p className="text-xs text-slate-400 mt-2 font-medium">48 Adam-gün / yıl | Temel Yalın &amp; 5S</p>
-                <div className="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
-                  <span className="text-slate-400">Tahmini Kazanç:</span>
-                  <strong className="text-emerald-400 font-bold">{currencySymbol}{Math.round(totalLossAvg * 0.18 * (successRatePct / 100)).toLocaleString('tr-TR')}</strong>
+              {qla.packages.filter(p => p.def.id !== 'kocluk' || p.recommended).map(p => (
+                <div
+                  key={p.def.id}
+                  onClick={() => setSelectedPackageId && setSelectedPackageId(p.def.id)}
+                  className={`p-5 rounded-2xl border transition-all cursor-pointer ${sel.def.id === p.def.id ? 'bg-slate-900 border-emerald-500 ring-2 ring-emerald-500/50' : 'bg-slate-900/60 border-slate-800'}`}
+                >
+                  <span className={`text-[9px] font-mono font-bold block uppercase ${p.recommended ? 'text-red-400' : 'text-slate-400'}`}>{p.recommended ? 'ÖNERİLEN' : 'ALTERNATİF'}</span>
+                  <h5 className="font-bold text-sm text-slate-100 mt-1">{p.def.name}</h5>
+                  <p className="text-xs text-slate-400 mt-2 font-medium">{p.def.days} Adam-gün / yıl | {p.def.focus}</p>
+                  <div className="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
+                    <span className="text-slate-400">Tahmini Kazanç:</span>
+                    <strong className="text-emerald-400 font-bold">{currencySymbol}{Math.round(p.gainMid * (successRatePct / 100)).toLocaleString('tr-TR')}</strong>
+                  </div>
+                  <div className="flex justify-between items-center text-xs mt-1">
+                    <span className="text-slate-400">Geri Ödeme:</span>
+                    <strong className="text-amber-400 font-bold">{p.paybackExpMonths} Ay</strong>
+                  </div>
                 </div>
-              </div>
-
-              {/* Option 2 */}
-              <div className={`p-5 rounded-2xl border transition-all ${selectedOption === 2 ? 'bg-slate-900 border-red-500 ring-2 ring-red-500/50' : 'bg-slate-900/60 border-slate-800'}`}>
-                <span className="text-[9px] font-mono font-bold text-red-400 block uppercase">OPSİYON 02 — ÖNERİLEN</span>
-                <h5 className="font-bold text-sm text-slate-100 mt-1">Hızlandırılmış Program</h5>
-                <p className="text-xs text-slate-400 mt-2 font-medium">104 Adam-gün / yıl | SMED &amp; VSM Akış</p>
-                <div className="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
-                  <span className="text-slate-400">Tahmini Kazanç:</span>
-                  <strong className="text-emerald-400 font-bold">{currencySymbol}{Math.round(totalLossAvg * 0.42 * (successRatePct / 100)).toLocaleString('tr-TR')}</strong>
-                </div>
-              </div>
-
-              {/* Option 3 */}
-              <div className={`p-5 rounded-2xl border transition-all ${selectedOption === 3 ? 'bg-slate-900 border-indigo-500 ring-2 ring-indigo-500/50' : 'bg-slate-900/60 border-slate-800'}`}>
-                <span className="text-[9px] font-mono font-bold text-slate-400 block uppercase">OPSİYON 03</span>
-                <h5 className="font-bold text-sm text-slate-100 mt-1">Dönüşüm Liderliği</h5>
-                <p className="text-xs text-slate-400 mt-2 font-medium">156 Adam-gün / yıl | TPM &amp; Kültür</p>
-                <div className="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
-                  <span className="text-slate-400">Tahmini Kazanç:</span>
-                  <strong className="text-emerald-400 font-bold">{currencySymbol}{Math.round(totalLossAvg * 0.68 * (successRatePct / 100)).toLocaleString('tr-TR')}</strong>
-                </div>
-              </div>
-
-              {/* Option 4 */}
-              <div className="p-5 rounded-2xl border bg-slate-900/60 border-slate-800">
-                <span className="text-[9px] font-mono font-bold text-slate-400 block uppercase">OPSİYON 04</span>
-                <h5 className="font-bold text-sm text-slate-100 mt-1">Operasyonel Mükemmellik</h5>
-                <p className="text-xs text-slate-400 mt-2 font-medium">208 Adam-gün / yıl | Uçtan Uca WCM</p>
-                <div className="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
-                  <span className="text-slate-400">Tahmini Kazanç:</span>
-                  <strong className="text-emerald-400 font-bold">{currencySymbol}{Math.round(totalLossAvg * 0.82 * (successRatePct / 100)).toLocaleString('tr-TR')}</strong>
-                </div>
-              </div>
+              ))}
             </div>
 
             {/* Bottom Actions */}

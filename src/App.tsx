@@ -53,6 +53,7 @@ import Dashboard from './components/Dashboard';
 import SahaBulgulariPanel from './components/SahaBulgulariPanel';
 import { ExportService } from './services/pdf';
 import LoginPage from './components/LoginPage';
+import { computeQla, LossKey, QlaInput, normalizeTr } from './engine/qla';
 
 const appLogo = "/gemba_digital_logo.png";
 
@@ -224,8 +225,8 @@ const formatNumberWithDots = (value: string | number): string => {
 };
 
 const getSectorCostStructure = (sectorStr: string, productStr: string) => {
-  const sec = (sectorStr || "").toLowerCase();
-  const prod = (productStr || "").toLowerCase();
+  const sec = normalizeTr(sectorStr);
+  const prod = normalizeTr(productStr);
   
   if (sec.includes("oto") || sec.includes("tasit") || sec.includes("parca") || prod.includes("oto") || prod.includes("yedek")) {
     return {
@@ -311,6 +312,21 @@ const getSectorCostStructure = (sectorStr: string, productStr: string) => {
   }
 };
 
+// ─── PUANLAMA: -1 = puan verilmedi, 0 = İzlenmedi, 1-3 = puan ───────────────
+const UNSCORED = -1;
+/** Eski kayıtlarda "verilmedi" de 0 olarak tutuluyordu: hiç -1 yoksa 0'lar "verilmedi" sayılır */
+const normalizeScores = (raw: Record<number, number> | undefined | null): Record<number, number> => {
+  const src = raw || {};
+  const isLegacy = !Object.values(src).some(v => v === UNSCORED);
+  const out: Record<number, number> = {};
+  for (let i = 1; i <= 17; i++) {
+    const v = src[i];
+    out[i] = typeof v === 'number' && v >= 0 && !(isLegacy && v === 0) ? v : UNSCORED;
+  }
+  return out;
+};
+const scoreValue = (v: number | undefined) => (typeof v === 'number' && v > 0 ? v : 0);
+
 export default function App() {
   // ─── PLATFORM VIEW AND MULTI-COMPANY STATE ───────────────────────────────
   const [currentCompanyId, setCurrentCompanyId] = useState<string>(() => {
@@ -381,6 +397,11 @@ export default function App() {
       setReworkRate(details.operation.reworkRate || '2.7');
       setOvertimeRate(details.operation.overtimeRate || '8.5');
       setLeadTime(details.operation.leadTime || '12');
+      setStockUnits(details.operation.stockUnits || '');
+      setSetupTimePct(details.operation.setupTimePct || '');
+      setBreakdownPct(details.operation.breakdownPct || '');
+      setPlanRealizationPct(details.operation.planRealizationPct || '');
+      setSustainYears(Number(details.operation.sustainYears) || 3);
       setOee(details.operation.oee || '58');
       setCoveredArea(details.operation.coveredArea || '4.500');
       setOperatorsCount(details.operation.operatorsCount || '120');
@@ -404,7 +425,7 @@ export default function App() {
       setCostPropOverhead(details.operation.costPropOverhead || '10');
       setCostPropProfit(details.operation.costPropProfit || '10');
 
-      setScores(details.operation.scores || {});
+      setScores(normalizeScores(details.operation.scores));
       setChatMessages(details.operation.chatMessages || []);
     } else {
       setUrunGrubu(details.company.sector);
@@ -464,6 +485,15 @@ export default function App() {
   const [overtimeRate, setOvertimeRate] = useState(() => localStorage.getItem('gp_overtimeRate') || '8.5');
   const [leadTime, setLeadTime] = useState(() => localStorage.getItem('gp_leadTime') || '12');
   const [oee, setOee] = useState(() => localStorage.getItem('gp_oee') || '58');
+  const [stockUnits, setStockUnits] = useState(() => localStorage.getItem('gp_stockUnits') || '');
+  const [setupTimePct, setSetupTimePct] = useState(() => localStorage.getItem('gp_setupTimePct') || '');
+  const [breakdownPct, setBreakdownPct] = useState(() => localStorage.getItem('gp_breakdownPct') || '');
+  const [planRealizationPct, setPlanRealizationPct] = useState(() => localStorage.getItem('gp_planRealizationPct') || '');
+  useEffect(() => { localStorage.setItem('gp_planRealizationPct', planRealizationPct); }, [planRealizationPct]);
+  useEffect(() => { localStorage.setItem('gp_setupTimePct', setupTimePct); localStorage.setItem('gp_breakdownPct', breakdownPct); }, [setupTimePct, breakdownPct]);
+  const [sustainYears, setSustainYears] = useState<number>(() => Number(localStorage.getItem('gp_sustainYears')) || 3);
+  useEffect(() => { localStorage.setItem('gp_stockUnits', stockUnits); }, [stockUnits]);
+  useEffect(() => { localStorage.setItem('gp_sustainYears', String(sustainYears)); }, [sustainYears]);
   const [coveredArea, setCoveredArea] = useState(() => localStorage.getItem('gp_coveredArea') || '4.500');
   const [operatorsCount, setOperatorsCount] = useState(() => localStorage.getItem('gp_operatorsCount') || '120');
   const [setupFrequency, setSetupFrequency] = useState(() => localStorage.getItem('gp_setupFrequency') || '5');
@@ -478,7 +508,7 @@ export default function App() {
   const [wizardSeveranceRate, setWizardSeveranceRate] = useState(() => Number(localStorage.getItem('gp_wiz_severance_rate') || '8.33'));
   const [wizardLeaveRate, setWizardLeaveRate] = useState(() => Number(localStorage.getItem('gp_wiz_leave_rate') || '5.0'));
   const [wizardSideBenefits, setWizardSideBenefits] = useState(() => localStorage.getItem('gp_wiz_side_benefits') || '2.000');
-  const [selectedOption, setSelectedOption] = useState<1 | 2 | 3>(2);
+  const [selectedPackageId, setSelectedPackageId] = useState<string | undefined>(undefined);
   const isNotionMode = false;
   const [showIframePrintToast, setShowIframePrintToast] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -489,6 +519,74 @@ export default function App() {
   const [costPropMaintenance, setCostPropMaintenance] = useState(() => localStorage.getItem('gp_costPropMaintenance') || '');
   const [costPropOverhead, setCostPropOverhead] = useState(() => localStorage.getItem('gp_costPropOverhead') || '');
   const [costPropProfit, setCostPropProfit] = useState(() => localStorage.getItem('gp_costPropProfit') || '10');
+
+  // ─── SEKTÖR MALİYET YAPISI ÖNERİSİ (web araştırması, danışman onayıyla uygulanır) ───
+  type CostRange = { min: number; max: number; ort: number };
+  type CostSuggestion = {
+    sektor: string; malzeme: CostRange; iscilik: CostRange; enerji: CostRange; bakim: CostRange; genel: CostRange; kar: CostRange;
+    aciklama: string; kaynaklar: { title: string; url: string }[]; fromWeb: boolean;
+  };
+  const [costSuggestion, setCostSuggestion] = useState<CostSuggestion | null>(null);
+  // Oranlar sistem tarafından (sektör tablosu / web önerisi) doldurulduysa ve danışman değiştirmediyse "tahmini" sayılır
+  const [costAutoSnapshot, setCostAutoSnapshot] = useState<string | null>(() => localStorage.getItem('gp_costAutoSnapshot'));
+  useEffect(() => { if (costAutoSnapshot) localStorage.setItem('gp_costAutoSnapshot', costAutoSnapshot); else localStorage.removeItem('gp_costAutoSnapshot'); }, [costAutoSnapshot]);
+  const costSnapshotOf = (vals: string[]) => vals.map(v => String(Number(v) || 0)).join('|');
+  const [costSuggestLoading, setCostSuggestLoading] = useState(false);
+  const fetchCostSuggestion = async (force = false) => {
+    if (!sektor || sektor.trim().length < 3) return;
+    const cacheKey = 'gp_costSuggest_' + normalizeTr(`${sektor}|${urunGrubu}`);
+    if (!force) {
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) { setCostSuggestion(JSON.parse(cached)); return; }
+      } catch (e) {}
+    }
+    setCostSuggestLoading(true);
+    try {
+      const res = await fetch('/api/cost-structure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sector: sektor, product: urunGrubu }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const sug: CostSuggestion = { ...data, fromWeb: true };
+      setCostSuggestion(sug);
+      try { localStorage.setItem(cacheKey, JSON.stringify(sug)); } catch (e) {}
+    } catch (err: any) {
+      // Web araştırması yapılamazsa dahili sektör tablosu öneri olarak gösterilir
+      const t = getSectorCostStructure(sektor, urunGrubu);
+      const rng = (v: number): CostRange => ({ min: Math.round(v * 0.8), max: Math.round(v * 1.2), ort: v });
+      setCostSuggestion({
+        sektor: t.title,
+        malzeme: rng(t.malzeme * 0.9), iscilik: rng(t.iscilik * 0.9), enerji: rng(t.enerji * 0.9),
+        bakim: rng(t.bakim * 0.9), genel: rng(t.genel * 0.9), kar: rng(10),
+        aciklama: `Web araştırması yapılamadı (${err?.message || 'bağlantı hatası'}). Dahili sektör tablosu gösteriliyor.`,
+        kaynaklar: [], fromWeb: false,
+      });
+    } finally {
+      setCostSuggestLoading(false);
+    }
+  };
+  // Sektör / ürün grubu yazıldıktan 1,5 sn sonra öneri otomatik getirilir (önbellekte varsa oradan)
+  useEffect(() => {
+    setCostSuggestion(null);
+    const t = setTimeout(() => { fetchCostSuggestion(false); }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sektor, urunGrubu]);
+
+  const applyCostSuggestion = () => {
+    if (!costSuggestion) return;
+    const f = (v: number) => (Math.round(v * 10) / 10).toString();
+    setCostPropMaterial(f(costSuggestion.malzeme.ort));
+    setCostPropLabor(f(costSuggestion.iscilik.ort));
+    setCostPropEnergy(f(costSuggestion.enerji.ort));
+    setCostPropMaintenance(f(costSuggestion.bakim.ort));
+    setCostPropOverhead(f(costSuggestion.genel.ort));
+    setCostPropProfit(f(costSuggestion.kar.ort));
+    setCostAutoSnapshot(costSnapshotOf([costSuggestion.malzeme.ort, costSuggestion.iscilik.ort, costSuggestion.enerji.ort, costSuggestion.bakim.ort, costSuggestion.genel.ort, costSuggestion.kar.ort].map(f)));
+  };
 
   const [urunGrubuEnCok, setUrunGrubuEnCok] = useState(() => localStorage.getItem('gp_urunGrubuEnCok') || '95 kW Motor');
   const [urunGrubuAdet, setUrunGrubuAdet] = useState(() => localStorage.getItem('gp_urunGrubuAdet') || '25.000');
@@ -504,16 +602,12 @@ export default function App() {
     try {
       const saved = localStorage.getItem('gp_scores');
       if (saved) {
-        return JSON.parse(saved);
+        return normalizeScores(JSON.parse(saved));
       }
     } catch (e) {
       console.error(e);
     }
-    const initial: Record<number, number> = {};
-    for (let i = 1; i <= 17; i++) {
-       initial[i] = 0;
-    }
-    return initial;
+    return normalizeScores({});
   });
 
   const [eurTry, setEurTry] = useState<number>(37.65);
@@ -656,6 +750,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
       setCostPropMaintenance((structure.bakim * 0.9).toFixed(1).replace('.0', ''));
       setCostPropOverhead((structure.genel * 0.9).toFixed(1).replace('.0', ''));
       setCostPropProfit('10');
+      setCostAutoSnapshot(costSnapshotOf([structure.malzeme, structure.iscilik, structure.enerji, structure.bakim, structure.genel].map(v => (v * 0.9).toFixed(1).replace('.0', '')).concat('10')));
       
       prevSectorRef.current = sektor;
       prevProdRef.current = urunGrubu;
@@ -789,9 +884,11 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
 
   // ─── CALCULATIONS & LOGIC ──────────────────────────────────────────────────
   const currencySymbol = currency === 'TRY' ? '₺' : currency === 'EUR' ? '€' : '$';
+  // Seçili para biriminden TL'ye çevrim kuru (görüntüleme)
+  const activeRate = currency === 'EUR' ? (eurTry || 37.65) : currency === 'USD' ? (usdTry || 34.80) : 1;
   const scoresArray = Object.values(scores) as number[];
-  const totalScore = scoresArray.reduce((sum, val) => sum + val, 0);
-  const answeredCount = scoresArray.filter(val => val > 0).length;
+  const totalScore = scoresArray.reduce((sum, val) => sum + scoreValue(val), 0);
+  const answeredCount = scoresArray.filter(val => val >= 0).length;
 
   // Find recommended programs based on current sum
   const getProgram = (score: number): ProgramConfig => {
@@ -889,7 +986,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
   const totalOp1Eur = currency === 'EUR' ? Math.round(totalOp1Lira) : currency === 'USD' ? Math.round(totalOp1Lira / eurUsdRate) : Math.round(totalOp1Lira / eurTry);
   const totalOp2Eur = currency === 'EUR' ? Math.round(totalOp2Lira) : currency === 'USD' ? Math.round(totalOp2Lira / eurUsdRate) : Math.round(totalOp2Lira / eurTry);
 
-  // ─── INDUSTRIAL FINANCIAL CALCULATIONS ──────────────────────────────────────
+  // ─── INDUSTRIAL FINANCIAL CALCULATIONS (tek kaynak: src/engine/qla.ts) ─────
   const volNum = Number(annualVolume.toString().replace(/\./g, '')) || 0;
   const turnoverNum = Number(turnoverLira.toString().replace(/\./g, '')) || 0;
   const plannedEffNum = Number(plannedEfficiency) || 0;
@@ -899,323 +996,158 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
   const reworkRateNum = Number(reworkRate) || 0;
   const overtimeRateNum = Number(overtimeRate) || 0;
   const leadTimeNum = Number(leadTime) || 0;
-  const leadTimeMinTarget = Math.round(leadTimeNum * 0.4 * 10) / 10; // 60% reduction
-  const leadTimeMaxTarget = Math.round(leadTimeNum * 0.6 * 10) / 10; // 40% reduction
-  const leadTimeSavedMin = Math.round((leadTimeNum - leadTimeMaxTarget) * 10) / 10; // 40% saved
-  const leadTimeSavedMax = Math.round((leadTimeNum - leadTimeMinTarget) * 10) / 10; // 60% saved
-
   const oeeNum = Number(oee) || 0;
-  const areaNum = Number(coveredArea.toString().replace(/\./g, '')) || 0;
   const opsNum = Number(operatorsCount) || 0;
-  const setupMachineCountNum = Number(setupMachineCount.toString().replace(/\./g, '')) || 1;
+  const setupMachineCountNum = Number(setupMachineCount.toString().replace(/\./g, '')) || 0;
   const setupFrequencyNum = Number(setupFrequency) || 0;
   const setupDurationNum = Number(setupDuration) || 0;
   const affectedOpsSetupNum = Number(affectedOpsSetup) || 0;
   const grossLaborCostNum = Number(grossLaborCost.toString().replace(/\./g, '')) || 0;
 
-  // 1. Labor productivity
   const laborProductivity = opsNum > 0 ? Math.round(volNum / opsNum) : 0;
 
-  // 2. COPQ calculation
-  const copqLossMin = Math.round(turnoverNum * (copqRateNum / 100));
-  // Max COPQ includes hidden rework effort, inspection overhead, and customer claims
-  const copqLossMax = Math.round(copqLossMin * 1.45);
-
-  // 3. Hourly labor cost (based on 180 working hours per month)
-  const hourlyLaborCost = Math.round(grossLaborCostNum / 180 * 100) / 100;
-
-  // 4. Setup losses
-  // Total setups per year assuming 52 active production weeks and accounting for setup machine count
-  const annualSetupsCount = Math.round(setupFrequencyNum * 52 * setupMachineCountNum);
-  // Total setup duration in hours
-  const annualSetupHours = Math.round(((setupDurationNum / 60) * annualSetupsCount) * 10) / 10;
-  // Setup labor loss (wasted wages during changeovers)
-  const setupLaborLoss = Math.round(annualSetupHours * affectedOpsSetupNum * (grossLaborCostNum / 180));
-  // Setup capacity lost sales opportunity rate (distributed across machines to prevent double-counting)
-  const hourlyTurnoverRate = (turnoverNum / setupMachineCountNum) / (300 * 24);
-  const setupOpportunityLoss = Math.round(annualSetupHours * hourlyTurnoverRate * 1.35);
-
-  const setupLossMin = setupLaborLoss;
-  const setupLossMax = setupLaborLoss + setupOpportunityLoss;
-
-  // 5. Inefficiency losses
-  const efficiencyGap = Math.max(0, plannedEffNum - actualEffNum);
-  const totalWorkingHoursPerMonth = 180;
-  // Total operator hours in the system per year
-  const annualOperatorHoursPaid = opsNum * totalWorkingHoursPerMonth * 12;
-  // Lost labor hours due to inefficiency gap
-  const lostLaborHours = Math.round(annualOperatorHoursPaid * (efficiencyGap / 100));
-  const inefficiencyLaborLoss = Math.round(lostLaborHours * (grossLaborCostNum / 180));
-  
-  // Overhead lost capacity value (amortization, power, unfulfilled orders overhead)
-  const inefficiencyOverheadLoss = Math.round(inefficiencyLaborLoss * 1.65);
-
-  const inefficiencyLossMin = inefficiencyLaborLoss;
-  const inefficiencyLossMax = inefficiencyLaborLoss + inefficiencyOverheadLoss;
-
-  // 6. Floor area productivity
-  const areaProductivity = areaNum > 0 ? Math.round(turnoverNum / areaNum) : 0;
-
-  // 7. TOTAL LOSSES WITH THREE-TIER SCENARIOS
-  const totalLossConservative = copqLossMin + setupLaborLoss + inefficiencyLaborLoss;
-  const totalLossExpected = Math.round(copqLossMin * 1.25) + Math.round(setupLaborLoss + setupOpportunityLoss * 0.60) + Math.round(inefficiencyLaborLoss + inefficiencyOverheadLoss * 0.50);
-  const totalLossHigh = Math.round(copqLossMin * 1.45) + Math.round(setupLaborLoss + setupOpportunityLoss) + Math.round(inefficiencyLaborLoss + inefficiencyOverheadLoss);
-  const totalLossAvg = totalLossExpected; // baseline for dashboard
-
-  // 8. Scenario comparison calculation variables for dynamic dashboard
-  // Dynamic lead time reduction based on selected package/option:
-  // Paket 1: %30, Paket 2: %40, Paket 3: %50
-  const leadTimeSavingsPercent = selectedOption === 1 ? 30 : selectedOption === 2 ? 40 : 50;
-  const targetLeadTimeRatio = (100 - leadTimeSavingsPercent) / 100;
-  const targetLeadTime = Math.round(leadTimeNum * targetLeadTimeRatio * 10) / 10;
-
-  const targetProductivityRatio = selectedOption === 1 ? 1.20 : selectedOption === 2 ? 1.30 : 1.35;
-  const targetProductivity = Math.round(laborProductivity * targetProductivityRatio);
-  const prodImprovementPercent = Math.round((targetProductivityRatio - 1) * 100);
-
-  const targetLossRatio = selectedOption === 1 ? 0.82 : selectedOption === 2 ? 0.58 : 0.32;
-  const targetLossCost = Math.round(totalLossAvg * targetLossRatio);
-  const lossReductionPercent = Math.round((1 - targetLossRatio) * 100);
-  const netFinancialGain = Math.round(totalLossAvg * (1 - targetLossRatio));
-
-  // ─── SEKTÖREL BENCHMARK TABANLI OPERASYONEL FIRSAT POTANSİYELİ ANALİZİ HESAPLARI ───
+  // Maliyet yapısı: boş bırakılan oranlar sektör varsayılanından tamamlanır
   const sectorCostStr = getSectorCostStructure(sektor, urunGrubu);
-  
-  // Dynamic product group ciro calculation if selected
   const urunGrubuOranNum = Number(urunGrubuOran) || 35;
   const productFamilyTurnover = turnoverNum * (urunGrubuOranNum / 100);
   const currentCostTurnoverBase = useProductFamilyCost ? productFamilyTurnover : turnoverNum;
+  const costOr = (val: string, fallback: number) => (val === '' || val === undefined || isNaN(Number(val)) ? fallback : Number(val));
+  const costPctInput = {
+    malzeme: costOr(costPropMaterial, sectorCostStr.malzeme * 0.9),
+    iscilik: costOr(costPropLabor, sectorCostStr.iscilik * 0.9),
+    enerji: costOr(costPropEnergy, sectorCostStr.enerji * 0.9),
+    bakim: costOr(costPropMaintenance, sectorCostStr.bakim * 0.9),
+    genel: costOr(costPropOverhead, sectorCostStr.genel * 0.9),
+  };
+  const costFromSector = [costPropMaterial, costPropLabor, costPropEnergy, costPropMaintenance, costPropOverhead].some(v => v === '')
+    || costAutoSnapshot === costSnapshotOf([costPropMaterial, costPropLabor, costPropEnergy, costPropMaintenance, costPropOverhead, costPropProfit]);
 
-  // Dynamic user-editable cost proportions based on turnover base
+  const recommendedDays = currentProgram.op1.ag;
+  // Olgunluk skoru değişip yeni paket önerildiğinde seçim önerilene döner
+  useEffect(() => { setSelectedPackageId(undefined); }, [recommendedDays]);
+  const qlaInput: QlaInput = {
+    turnover: currentCostTurnoverBase,
+    costPct: costPctInput,
+    costFromSector,
+    scrapPct: scrapRateNum,
+    reworkPct: reworkRateNum,
+    overtimePct: overtimeRateNum,
+    plannedEffPct: plannedEffNum,
+    actualEffPct: actualEffNum,
+    oeePct: oeeNum,
+    setupPerWeek: setupFrequencyNum,
+    setupMinutes: setupDurationNum,
+    setupMachines: setupMachineCountNum,
+    setupOperators: affectedOpsSetupNum,
+    setupTimePct: Number(setupTimePct) || 0,
+    breakdownPct: Number(breakdownPct) || 0,
+    planRealizationPct: Number(planRealizationPct) || 0,
+    laborCostMonthly: grossLaborCostNum,
+    operators: opsNum,
+    leadTimeDays: leadTimeNum,
+    annualVolume: volNum,
+    stockUnits: Number(stockUnits.toString().replace(/\./g, '')) || 0,
+    currency,
+    sustainYears,
+    recommendedDays,
+    maturityScore: totalScore,
+    budgetOf: (days: number) => getProgramRateInfo('paket', days).rate * days,
+    selectedPackageId,
+  };
+  const qla = computeQla(qlaInput);
+
+  // Maliyet tabanları (görüntüleme)
   const operatingProfitVal = currentCostTurnoverBase * ((Number(costPropProfit) || 0) / 100);
-  const m_base = currentCostTurnoverBase * ((Number(costPropMaterial) || 0) / 100);
-  const i_base = currentCostTurnoverBase * ((Number(costPropLabor) || 0) / 100);
-  const e_base = currentCostTurnoverBase * ((Number(costPropEnergy) || 0) / 100);
-  const b_base = currentCostTurnoverBase * ((Number(costPropMaintenance) || 0) / 100);
-  const g_base = currentCostTurnoverBase * ((Number(costPropOverhead) || 0) / 100);
-  const c_base = currentCostTurnoverBase; // Ciro
+  const m_base = qla.bases.malzeme;
+  const i_base = qla.bases.iscilik;
+  const e_base = qla.bases.enerji;
+  const b_base = qla.bases.bakim;
+  const g_base = qla.bases.genel;
 
-  // ─── STRICT COPQ POOL METHODOLOGY FOR SANITY & REALISM ───
-  // Total COPQ is aligned with the expected annual loss pool for perfect consistency across tabs.
+  // Kayıp havuzu
+  const loss_durus = qla.lossByKey.durus;
+  const loss_kalite = qla.lossByKey.kalite;
+  const loss_mesai = qla.lossByKey.mesai;
+  const loss_hurda = qla.lossByKey.hurda;
+  const loss_iscilik = qla.lossByKey.iscilik;
+  const loss_kapasite = qla.lossByKey.kapasite;
+  const totalLossExpected = qla.totalLoss;
+  const totalLossConservative = qla.totalLossMin;
+  const totalLossHigh = qla.totalLossMax;
+  const totalLossAvg = totalLossExpected;
   const totalCopqPool = totalLossExpected;
 
-  // Loss weights based strictly on real factory inputs (0 if input metric is 0)
-  const isSetupActive = setupFrequencyNum > 0 && setupDurationNum > 0 && setupMachineCountNum > 0;
-  const w1 = isSetupActive ? Math.max(5, (setupDurationNum / 30) * setupFrequencyNum * 5) : 0; // Duruşlar & Model Değişimi
-  const w2 = reworkRateNum > 0 ? reworkRateNum * 4 : 0;     // Kalite (Yeniden İşleme)
-  const w3 = overtimeRateNum > 0 ? overtimeRateNum * 2 : 0;   // Fazla Mesai
-  const w4 = scrapRateNum > 0 ? scrapRateNum * 5 : 0;       // Hurda & Fire
-  const w5 = (plannedEffNum > actualEffNum) ? (plannedEffNum - actualEffNum) * 1.5 : 0; // İşçilik Verimsizliği
-  const w6 = (oeeNum > 0 && oeeNum < 85) ? (85 - oeeNum) * 1.2 : 0; // Kapasite Kullanım Kayıpları
+  // Eski ekranlarla uyumlu ara değerler
+  const copqLossMin = loss_hurda + loss_kalite;
+  const annualSetupsCount = qla.setup.annualSetups;
+  const annualSetupHours = qla.setup.annualHours;
+  const setupLaborLoss = qla.setup.laborPart;
+  const setupOpportunityLoss = qla.setup.fixedPart;
+  const hourlyTurnoverRate = setupMachineCountNum > 0 ? turnoverNum / setupMachineCountNum / 4000 : 0;
+  const efficiencyGap = Math.max(0, plannedEffNum - actualEffNum);
+  const annualOperatorHoursPaid = opsNum * 180 * 12;
+  const inefficiencyLaborLoss = loss_iscilik;
+  const inefficiencyOverheadLoss = 0;
 
-  const sum_w = (w1 + w2 + w3 + w4 + w5 + w6) || 1;
-  const loss_durus = w1 > 0 ? Math.round(totalCopqPool * (w1 / sum_w)) : 0;
-  const loss_kalite = w2 > 0 ? Math.round(totalCopqPool * (w2 / sum_w)) : 0;
-  const loss_mesai = w3 > 0 ? Math.round(totalCopqPool * (w3 / sum_w)) : 0;
-  const loss_hurda = w4 > 0 ? Math.round(totalCopqPool * (w4 / sum_w)) : 0;
-  const loss_iscilik = w5 > 0 ? Math.round(totalCopqPool * (w5 / sum_w)) : 0;
-  const loss_kapasite = totalCopqPool - (loss_durus + loss_kalite + loss_mesai + loss_hurda + loss_iscilik);
+  // Seçili paket (varsayılan: olgunluk skoruna göre önerilen)
+  const selPkg = qla.selected;
+  const leadTimeSavingsPercent = selPkg.def.kpi.leadTime;
+  const targetLeadTimeRatio = (100 - leadTimeSavingsPercent) / 100;
+  const targetLeadTime = Math.round(leadTimeNum * targetLeadTimeRatio * 10) / 10;
+  const targetProductivityRatio = 1 + selPkg.def.kpi.productivity / 100;
+  const targetProductivity = Math.round(laborProductivity * targetProductivityRatio);
+  const prodImprovementPercent = selPkg.def.kpi.productivity;
+  const netFinancialGain = selPkg.gainMid;
+  const lossReductionPercent = totalLossAvg > 0 ? Math.round(netFinancialGain / totalLossAvg * 100) : 0;
+  const targetLossRatio = 1 - lossReductionPercent / 100;
+  const targetLossCost = Math.round(totalLossAvg - netFinancialGain);
 
-  // Helper to adjust benchmark ranges dynamically based on Diagnostic Score
-  const getAdjustedRatios = (defaultMin: number, defaultMax: number) => {
-    const scorePct = Math.round((totalScore / 51) * 100);
-    let minVal = defaultMin;
-    let maxVal = defaultMax;
+  // Fırsat matrisi: seçili paketin kazancı kategorilere dağıtılmış hali
+  const opp = (k: LossKey) => qla.opportunities.find(o => o.key === k)!;
+  const range = (k: LossKey) => ({ minPct: opp(k).pctMin, maxPct: opp(k).pctMax });
+  const oppScR = range('hurda');
+  const oppFmR = range('hurda');
+  const oppMesR = range('mesai');
+  const oppYiR = range('kalite');
+  const oppOvR = range('iscilik');
+  const oppSetupR = range('durus');
+  const oppPdR = range('ariza');
+  const oppOeeR = range('kapasite');
+  const oppOpvR = range('iscilik');
+  const oppLtR = { minPct: 0, maxPct: 0 };
+  const oppWipR = range('stok');
+  const oppSpR = { minPct: 0, maxPct: 0 };
+  const opp_sc_min = opp('hurda').gainMin, opp_sc_max = opp('hurda').gainMax;
+  const opp_fm_min = 0, opp_fm_max = 0;
+  const opp_mes_min = opp('mesai').gainMin, opp_mes_max = opp('mesai').gainMax;
+  const opp_yi_min = opp('kalite').gainMin, opp_yi_max = opp('kalite').gainMax;
+  const opp_ov_min = opp('iscilik').gainMin, opp_ov_max = opp('iscilik').gainMax;
+  const opp_opv_min = 0, opp_opv_max = 0;
+  const opp_setup_min = opp('durus').gainMin, opp_setup_max = opp('durus').gainMax;
+  const opp_oee_min = opp('kapasite').gainMin, opp_oee_max = opp('kapasite').gainMax;
+  const opp_pd_min = opp('ariza').gainMin, opp_pd_max = opp('ariza').gainMax;
+  const opp_lt_min = 0, opp_lt_max = 0;
+  const opp_wip_min = opp('stok').gainMin, opp_wip_max = opp('stok').gainMax;
+  const opp_sp_min = 0, opp_sp_max = 0;
 
-    if (scorePct <= 20) {
-      // Very low maturity: high potential for gains
-      minVal = defaultMin + 10;
-      maxVal = defaultMax - 10;
-      if (maxVal < minVal + 15) {
-        maxVal = minVal + 15;
-      }
-    } else if (scorePct <= 30) {
-      // Mid-low maturity
-      minVal = defaultMin + 5;
-      maxVal = defaultMax - 15;
-      if (maxVal < minVal + 15) {
-        maxVal = minVal + 15;
-      }
-    } else {
-      // High maturity: lower gains remaining
-      minVal = defaultMin;
-      maxVal = defaultMin + 10;
-    }
+  const total_dma_min = opp_sc_min + opp_mes_min + opp_yi_min + opp_ov_min;
+  const total_dma_max = opp_sc_max + opp_mes_max + opp_yi_max + opp_ov_max;
+  const total_ky_min = opp_setup_min + opp_oee_min + opp_pd_min;
+  const total_ky_max = opp_setup_max + opp_oee_max + opp_pd_max;
+  const total_sok_min = opp_wip_min;
+  const total_sok_max = opp_wip_max;
+  const total_economic_min = selPkg.gainMin;
+  const total_economic_max = selPkg.gainMax;
+  // Ciroya oran
+  const minEconomicLossPct = turnoverNum > 0 ? Math.round(total_economic_min / turnoverNum * 1000) / 10 : 0;
+  const maxEconomicLossPct = turnoverNum > 0 ? Math.round(total_economic_max / turnoverNum * 1000) / 10 : 0;
 
-    // Force spread limit constraints: min 10% spread, max 50% spread
-    const spread = maxVal - minVal;
-    if (spread < 10) {
-      maxVal = minVal + 10;
-    }
-    if (spread > 50) {
-      maxVal = minVal + 50;
-    }
-
-    return { minPct: minVal, maxPct: maxVal };
-  };
-
-  const oppScR = getAdjustedRatios(15, 50);
-  const oppFmR = getAdjustedRatios(12, 45);
-  const oppMesR = getAdjustedRatios(15, 50);
-  const oppYiR = getAdjustedRatios(10, 40);
-  const oppOvR = getAdjustedRatios(10, 45);
-
-  const oppSetupR = getAdjustedRatios(15, 55);
-  const oppPdR = getAdjustedRatios(10, 45);
-  const oppOeeR = getAdjustedRatios(15, 55);
-  const oppOpvR = getAdjustedRatios(12, 50);
-
-  const oppLtR = getAdjustedRatios(10, 40);
-  const oppWipR = getAdjustedRatios(10, 40);
-  const oppSpR = getAdjustedRatios(10, 30);
-
-  // 1) RAW DOĞRUDAN MALİYET AZALTMA (Sane, bounded values based strictly on non-zero loss category pools)
-  const raw_sc_min = loss_kalite > 0 ? loss_kalite * (oppScR.minPct / 100) : 0; 
-  const raw_sc_max = loss_kalite > 0 ? loss_kalite * (oppScR.maxPct / 100) : 0; 
-
-  const raw_fm_min = loss_hurda > 0 ? loss_hurda * (oppFmR.minPct / 100) : 0; 
-  const raw_fm_max = loss_hurda > 0 ? loss_hurda * (oppFmR.maxPct / 100) : 0;
-
-  const raw_mes_min = loss_mesai > 0 ? loss_mesai * (oppMesR.minPct / 100) : 0; 
-  const raw_mes_max = loss_mesai > 0 ? loss_mesai * (oppMesR.maxPct / 100) : 0;
-
-  const raw_yi_min = loss_kalite > 0 ? loss_kalite * (oppYiR.minPct / 100) : 0;
-  const raw_yi_max = loss_kalite > 0 ? loss_kalite * (oppYiR.maxPct / 100) : 0;
-
-  const raw_ov_min = loss_iscilik > 0 ? loss_iscilik * (oppOvR.minPct / 100) : 0;
-  const raw_ov_max = loss_iscilik > 0 ? loss_iscilik * (oppOvR.maxPct / 100) : 0;
-
-  // 2) RAW KAPASİTE YARATMA (SMED is 0 if setup loss is 0)
-  const raw_setup_min = loss_durus > 0 ? loss_durus * (oppSetupR.minPct / 100) : 0;
-  const raw_setup_max = loss_durus > 0 ? loss_durus * (oppSetupR.maxPct / 100) : 0;
-
-  const raw_pd_min = loss_kapasite > 0 ? loss_kapasite * (oppPdR.minPct / 100) : 0;
-  const raw_pd_max = loss_kapasite > 0 ? loss_kapasite * (oppPdR.maxPct / 100) : 0;
-
-  const raw_oee_min = loss_kapasite > 0 ? loss_kapasite * (oppOeeR.minPct / 100) : 0;
-  const raw_oee_max = loss_kapasite > 0 ? loss_kapasite * (oppOeeR.maxPct / 100) : 0;
-
-  const raw_opv_min = loss_iscilik > 0 ? loss_iscilik * (oppOpvR.minPct / 100) : 0;
-  const raw_opv_max = loss_iscilik > 0 ? loss_iscilik * (oppOpvR.maxPct / 100) : 0;
-
-  // 3) RAW STRATEJİK OPERASYONEL KAZANÇ
-  const raw_lt_min = loss_kapasite > 0 ? loss_kapasite * (oppLtR.minPct / 100) : 0;
-  const raw_lt_max = loss_kapasite > 0 ? loss_kapasite * (oppLtR.maxPct / 100) : 0;
-
-  const raw_wip_min = loss_kapasite > 0 ? loss_kapasite * (oppWipR.minPct / 100) : 0;
-  const raw_wip_max = loss_kapasite > 0 ? loss_kapasite * (oppWipR.maxPct / 100) : 0;
-
-  const raw_sp_min = loss_kapasite > 0 ? loss_kapasite * (oppSpR.minPct / 100) : 0;
-  const raw_sp_max = loss_kapasite > 0 ? loss_kapasite * (oppSpR.maxPct / 100) : 0;
-
-  // Calculate theoretical total unscaled opportunity
-  const raw_total_min = raw_sc_min + raw_fm_min + raw_mes_min + raw_yi_min + raw_ov_min +
-                        raw_setup_min + raw_pd_min + raw_oee_min + raw_opv_min +
-                        raw_lt_min + raw_wip_min + raw_sp_min;
-
-  const raw_total_max = raw_sc_max + raw_fm_max + raw_mes_max + raw_yi_max + raw_ov_max +
-                        raw_setup_max + raw_pd_max + raw_oee_max + raw_opv_max +
-                        raw_lt_max + raw_wip_max + raw_sp_max;
-
-  // Option 4 Targets (20% & 30% of totalCopqPool as mandated by the strict rule)
-  const target_total_min = Math.round(totalCopqPool * 0.20);
-  const target_total_max = Math.round(totalCopqPool * 0.30);
-
-  // Scaling factor to make sure the bottom-up sum corresponds exactly to the Option 4 pool reduction capacity
-  const scale_min = raw_total_min > 0 ? target_total_min / raw_total_min : 0.20;
-  const scale_max = raw_total_max > 0 ? target_total_max / raw_total_max : 0.30;
-
-  // Scale all individual elements proportionally so they sum up to target totals perfectly
-  const opp_sc_min = Math.round(raw_sc_min * scale_min);
-  const opp_sc_max = Math.round(raw_sc_max * scale_max);
-
-  const opp_fm_min = Math.round(raw_fm_min * scale_min);
-  const opp_fm_max = Math.round(raw_fm_max * scale_max);
-
-  const opp_mes_min = Math.round(raw_mes_min * scale_min);
-  const opp_mes_max = Math.round(raw_mes_max * scale_max);
-
-  const opp_yi_min = Math.round(raw_yi_min * scale_min);
-  const opp_yi_max = Math.round(raw_yi_max * scale_max);
-
-  const opp_ov_min = Math.round(raw_ov_min * scale_min);
-  const opp_ov_max = Math.round(raw_ov_max * scale_max);
-
-  const opp_setup_min = Math.round(raw_setup_min * scale_min);
-  const opp_setup_max = Math.round(raw_setup_max * scale_max);
-
-  const opp_pd_min = Math.round(raw_pd_min * scale_min);
-  const opp_pd_max = Math.round(raw_pd_max * scale_max);
-
-  const opp_oee_min = Math.round(raw_oee_min * scale_min);
-  const opp_oee_max = Math.round(raw_oee_max * scale_max);
-
-  const opp_opv_min = Math.round(raw_opv_min * scale_min);
-  const opp_opv_max = Math.round(raw_opv_max * scale_max);
-
-  const opp_lt_min = Math.round(raw_lt_min * scale_min);
-  const opp_lt_max = Math.round(raw_lt_max * scale_max);
-
-  const opp_wip_min = Math.round(raw_wip_min * scale_min);
-  const opp_wip_max = Math.round(raw_wip_max * scale_max);
-
-  const opp_sp_min = Math.round(raw_sp_min * scale_min);
-  const opp_sp_max = Math.round(raw_sp_max * scale_max);
-
-  // Grouped sums (fully scaled and matching layout tables perfectly)
-  const total_dma_min = opp_sc_min + opp_fm_min + opp_mes_min + opp_yi_min + opp_ov_min;
-  const total_dma_max = opp_sc_max + opp_fm_max + opp_mes_max + opp_yi_max + opp_ov_max;
-
-  const total_ky_min = opp_setup_min + opp_pd_min + opp_oee_min + opp_opv_min;
-  const total_ky_max = opp_setup_max + opp_pd_max + opp_oee_max + opp_opv_max;
-
-  const total_sok_min = opp_lt_min + opp_wip_min + opp_sp_min;
-  const total_sok_max = opp_lt_max + opp_wip_max + opp_sp_max;
-
-  // Total opportunities now match Option 4 limits to the single unit of currency
-  const total_economic_min = total_dma_min + total_ky_min + total_sok_min;
-  const total_economic_max = total_dma_max + total_ky_max + total_sok_max;
-
-  const minEconomicLossPct = totalLossExpected > 0 ? Math.round((total_economic_min / totalLossExpected) * 100) : 0;
-  const maxEconomicLossPct = totalLossExpected > 0 ? Math.round((total_economic_max / totalLossExpected) * 100) : 0;
-
-  // 4 IMPLEMENTATION OPTIONS & RECOV RANGE STRICT PERCENTAGES
-  const op1_min = Math.round(totalCopqPool * 0.05);
-  const op1_max = Math.round(totalCopqPool * 0.08);
-
-  const op2_min = Math.round(totalCopqPool * 0.10);
-  const op2_max = Math.round(totalCopqPool * 0.15);
-
-  const op3_min = Math.round(totalCopqPool * 0.17);
-  const op3_max = Math.round(totalCopqPool * 0.25);
-
-  const op4_min = target_total_min;
-  const op4_max = target_total_max;
-
-  const distributeRecoveryObj = (totalMinSec: number, totalMaxSec: number) => {
-    const rawA = loss_durus;
-    const rawB = loss_kalite + loss_hurda;
-    const rawC = loss_iscilik + loss_mesai;
-    const rawD = loss_kapasite;
-    const rawTotal = rawA + rawB + rawC + rawD || 1;
-
-    const minA = Math.round(totalMinSec * (rawA / rawTotal));
-    const minB = Math.round(totalMinSec * (rawB / rawTotal));
-    const minC = Math.round(totalMinSec * (rawC / rawTotal));
-    const minD = totalMinSec - (minA + minB + minC);
-
-    const maxA = Math.round(totalMaxSec * (rawA / rawTotal));
-    const maxB = Math.round(totalMaxSec * (rawB / rawTotal));
-    const maxC = Math.round(totalMaxSec * (rawC / rawTotal));
-    const maxD = totalMaxSec - (maxA + maxB + maxC);
-
-    return { minA, minB, minC, minD, maxA, maxB, maxC, maxD };
-  };
-
-  const op1_dist = distributeRecoveryObj(op1_min, op1_max);
-  const op2_dist = distributeRecoveryObj(op2_min, op2_max);
-  const op3_dist = distributeRecoveryObj(op3_min, op3_max);
-  const op4_dist = distributeRecoveryObj(op4_min, op4_max);
+  // Paket kartları (52 / 104 / 156 / 208 adam-gün)
+  const pkgOf = (id: string) => qla.packages.find(p => p.def.id === id)!;
+  const op1_min = pkgOf('standart').gainMin, op1_max = pkgOf('standart').gainMax;
+  const op2_min = pkgOf('hizli').gainMin, op2_max = pkgOf('hizli').gainMax;
+  const op3_min = pkgOf('donusum').gainMin, op3_max = pkgOf('donusum').gainMax;
+  const op4_min = pkgOf('opmuk').gainMin, op4_max = pkgOf('opmuk').gainMax;
 
   const getDynamicGembaFindings = () => {
     const findingsDatabase: Record<number, {
@@ -1294,7 +1226,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
 
     const lowScores = Object.entries(scores)
       .map(([no, val]) => ({ no: Number(no), score: val as number }))
-      .filter(x => x.score > 0 && x.score < 3 && findingsDatabase[x.no])
+      .filter(x => x.score >= 0 && x.score < 3 && findingsDatabase[x.no])
       .sort((a, b) => a.score - b.score);
 
     if (lowScores.length > 0) {
@@ -1385,7 +1317,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
   const handleScoreChange = (itemNo: number, value: number) => {
     setScores(prev => ({
       ...prev,
-      [itemNo]: prev[itemNo] === value ? 0 : value
+      [itemNo]: prev[itemNo] === value ? UNSCORED : value
     }));
   };
 
@@ -1458,11 +1390,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
       setAffectedOpsSetup('3');
       setGrossLaborCost('35500');
 
-      const initial: Record<number, number> = {};
-      for (let i = 1; i <= 17; i++) {
-        initial[i] = 0;
-      }
-      setScores(initial);
+      setScores(normalizeScores({}));
     }
   };
 
@@ -1473,7 +1401,8 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
     if (!currentCompanyId || isSwappingCompany.current) return;
 
     const activeRate = currency === 'EUR' ? (eurTry || 37.65) : currency === 'USD' ? (usdTry || 34.80) : 1;
-    const potentialSavingTL = Math.round((total_economic_max || 0) * activeRate);
+    // Kayıtlar önerilen paket üzerinden, TL karşılığıyla tutulur
+    const potentialSavingTL = Math.round((qla.recommended.gainMax || 0) * activeRate);
 
     // Save relational state to GembaDB
     await GembaDB.saveFullState(
@@ -1503,6 +1432,11 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
         reworkRate,
         overtimeRate,
         leadTime,
+        stockUnits,
+        setupTimePct,
+        breakdownPct,
+        planRealizationPct,
+        sustainYears: String(sustainYears),
         oee,
         coveredArea,
         operatorsCount,
@@ -1529,51 +1463,28 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
       {
         overallScore: totalScore,
         potentialSaving: potentialSavingTL,
-        investmentNeed: Number(totalOp1Lira) || 0,
-        paybackPeriod: 3,
+        investmentNeed: Math.round((qla.recommended.budget || 0) * activeRate),
+        paybackPeriod: qla.recommended.paybackExpMonths,
         notes: notlar,
       }
     );
 
     // Save calculated savings list dynamically (converted to TL for reporting)
-    const savingsList = [
-      {
-        savingId: 's1-' + currentCompanyId,
+    const recOpps = computeQla({ ...qlaInput, selectedPackageId: qla.recommended.def.id }).opportunities;
+    const savingsList = recOpps.filter(o => o.loss > 0).map(o => {
+      const annualSaving = Math.round(((o.gainMin + o.gainMax) / 2) * activeRate);
+      return {
+        savingId: `s-${o.key}-${currentCompanyId}`,
         companyId: currentCompanyId,
-        savingType: 'SMED / Kurulum Zamanı Tasarrufu',
-        currentCost: Math.round((setupLaborLoss || 0) * activeRate),
-        futureCost: Math.round(((setupLaborLoss || 0) * 0.4) * activeRate),
-        annualSaving: Math.round(((setupLaborLoss || 0) * 0.6) * activeRate),
-        roi: 6.5,
-        payback: 2,
-        co2Reduction: 8,
+        savingType: `${o.label} (${o.tool})`,
+        currentCost: Math.round(o.loss * activeRate),
+        futureCost: Math.round(o.loss * activeRate) - annualSaving,
+        annualSaving,
+        roi: qla.recommended.budget > 0 ? Math.round(qla.recommended.gainMid / qla.recommended.budget * 10) / 10 : 0,
+        payback: qla.recommended.paybackExpMonths,
         createdDate: new Date().toISOString()
-      },
-      {
-        savingId: 's2-' + currentCompanyId,
-        companyId: currentCompanyId,
-        savingType: 'Operasyonel Verimsizlik Tasarrufu',
-        currentCost: Math.round((inefficiencyLaborLoss || 0) * activeRate),
-        futureCost: Math.round(((inefficiencyLaborLoss || 0) * 0.58) * activeRate),
-        annualSaving: Math.round(((inefficiencyLaborLoss || 0) * 0.42) * activeRate),
-        roi: 5.2,
-        payback: 3,
-        co2Reduction: 11,
-        createdDate: new Date().toISOString()
-      },
-      {
-        savingId: 's3-' + currentCompanyId,
-        companyId: currentCompanyId,
-        savingType: 'Toplam Ekonomik Fırsat Potansiyeli',
-        currentCost: Math.round((totalLossExpected || 0) * activeRate),
-        futureCost: Math.round(((totalLossExpected || 0) - (total_economic_max || 0)) * activeRate),
-        annualSaving: potentialSavingTL,
-        roi: 8.2,
-        payback: 1,
-        co2Reduction: 15,
-        createdDate: new Date().toISOString()
-      }
-    ];
+      };
+    });
     GembaDB.saveSavings(currentCompanyId, savingsList);
     localStorage.setItem('gp_activeTab', activeTab);
     localStorage.setItem('gp_currency', currency);
@@ -1589,7 +1500,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
     performSave();
   }, [
     currentCompanyId, firmaAdi, sektor, adres, urunGrubu, calisanSayisi, vardiya, gorusulen, tarih, talepEdilenHizmet, notlar,
-    activeTab, currency, setupMachineCount, annualVolume, productionUnit, turnoverLira, plannedEfficiency, actualEfficiency, copqRate, scrapRate, reworkRate, overtimeRate, leadTime, oee,
+    activeTab, currency, setupMachineCount, annualVolume, productionUnit, turnoverLira, plannedEfficiency, actualEfficiency, copqRate, scrapRate, reworkRate, overtimeRate, leadTime, stockUnits, setupTimePct, breakdownPct, planRealizationPct, sustainYears, oee,
     coveredArea, operatorsCount, setupFrequency, setupDuration, affectedOpsSetup, grossLaborCost,
     wizardGrossSalary, wizardSgkRate, wizardYemek, wizardServis, wizardSeveranceRate, wizardLeaveRate, wizardSideBenefits,
     costPropMaterial, costPropLabor, costPropEnergy, costPropMaintenance, costPropOverhead, costPropProfit,
@@ -1624,16 +1535,16 @@ Mevcut Durum Analizi: ${getScoreLabel(totalScore)}
 [OPSİYON 1: ${currentProgram.op1.name}${op1RateInfo.hasDiscount ? ` (%${op1RateInfo.discountPercent} ÖZEL PAKET İNDİRİMİ)` : ''}]
 - Açıklama: ${DESCS[currentProgram.op1.name]}
 - Danışmanlık Süresi: ${currentProgram.op1.ag} Adam Gün
-- Günlük Birim Bedeli: ${op1RateInfo.rate.toLocaleString('tr-TR')} ₺${op1RateInfo.hasDiscount ? ` (Önceki: ₺${op1RateInfo.preDiscount?.toLocaleString('tr-TR')} / %${op1RateInfo.discountPercent} indirim uygulandı)` : ''}
-- Toplam Proje Bütçesi: ${totalOp1Lira.toLocaleString('tr-TR')} ₺ (Yaklaşık ${totalOp1Eur.toLocaleString('tr-TR')} EUR)
+- Günlük Birim Bedeli: ${currencySymbol}${op1RateInfo.rate.toLocaleString('tr-TR')}${op1RateInfo.hasDiscount ? ` (Önceki: ${currencySymbol}${op1RateInfo.preDiscount?.toLocaleString('tr-TR')} / %${op1RateInfo.discountPercent} indirim uygulandı)` : ''}
+- Toplam Proje Bütçesi: ${currencySymbol}${totalOp1Lira.toLocaleString('tr-TR')} (Yaklaşık ${totalOp1Eur.toLocaleString('tr-TR')} EUR)
 
 ${currentProgram.op2.name === "Mevcut Değil" && currentProgram.op1.name === "Standart Gelişim Programı" ? `[OPSİYON 2: YALIN ÜRETİM VE OPEX EĞİTİM PAKETLERİ (Alternatif Öneri)]
 - Açıklama: Saha danışmanlığı yerine, kurum içi insan kaynağı yetkinliğini artırmaya yönelik sınıf eğitim ve pratik atölye programları önerilmektedir.
 - Toplam Proje Bütçesi: Özel Bütçelendirilir (Fiyat ve toplam bütçe belirtilmemiştir)` : `[OPSİYON 2: ${currentProgram.op2.name}${op2RateInfo.hasDiscount ? ` (%${op2RateInfo.discountPercent} ÖZEL PAKET İNDİRİMİ)` : ''}]
 - Açıklama: ${DESCS[currentProgram.op2.name]}
 - Danışmanlık Süresi: ${currentProgram.op2.ag} Adam Gün
-- Günlük Birim Bedeli: ${op2RateInfo.rate.toLocaleString('tr-TR')} ₺${op2RateInfo.hasDiscount ? ` (Önceki: ₺${op2RateInfo.preDiscount?.toLocaleString('tr-TR')} / %${op2RateInfo.discountPercent} indirim uygulandı)` : ''}
-- Toplam Proje Bütçesi: ${totalOp2Lira.toLocaleString('tr-TR')} ₺ (Yaklaşık ${totalOp2Eur.toLocaleString('tr-TR')} EUR)${currentProgram.op2.name === "Standart Gelişim Programı" ? '\n- Alternatif Öneri: Paket 2 için Yalın Üretim ve OpEx Eğitim Paketleri de önerilir. (Fiyat ve bütçe bilgisi belirtilmemiştir)' : ''}`}
+- Günlük Birim Bedeli: ${currencySymbol}${op2RateInfo.rate.toLocaleString('tr-TR')}${op2RateInfo.hasDiscount ? ` (Önceki: ${currencySymbol}${op2RateInfo.preDiscount?.toLocaleString('tr-TR')} / %${op2RateInfo.discountPercent} indirim uygulandı)` : ''}
+- Toplam Proje Bütçesi: ${currencySymbol}${totalOp2Lira.toLocaleString('tr-TR')} (Yaklaşık ${totalOp2Eur.toLocaleString('tr-TR')} EUR)${currentProgram.op2.name === "Standart Gelişim Programı" ? '\n- Alternatif Öneri: Paket 2 için Yalın Üretim ve OpEx Eğitim Paketleri de önerilir. (Fiyat ve bütçe bilgisi belirtilmemiştir)' : ''}`}
 
 ------------------------------------------------------------------------
 3. SAHA TESPİTLERİ VE YORUMLAR
@@ -1693,7 +1604,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
     // 3. Kriterler
     CRITERIA.forEach((g) => {
       g.items.forEach((item) => {
-        const scoreVal = scores[item.no] || 0;
+        const scoreVal = scoreValue(scores[item.no]);
         let scoreLabel = "";
         if (scoreVal === 0) scoreLabel = "0 - Başlangıç Seviyesi / Tanımsız";
         else if (scoreVal === 1) scoreLabel = "1 - Temel Seviye / Kısmen Uygulanıyor";
@@ -2412,7 +2323,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
 
                     <div className="divide-y divide-slate-100">
                       {group.items.map((item) => {
-                        const score = scores[item.no] || 0;
+                        const score = scores[item.no] ?? UNSCORED;
                         return (
                           <div 
                             key={item.no} 
@@ -2444,7 +2355,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                                   onClick={() => handleScoreChange(item.no, 0)}
                                   className={`px-2 py-2 rounded-xl text-xs font-bold transition-all duration-150 border cursor-pointer text-center md:min-w-[84px] flex flex-col items-center justify-center gap-0.5 ${
                                     score === 0
-                                    ? 'bg-slate-500 border-slate-500/15 text-white shadow-[0_4px_12px_rgba(100,116,139,0.25)] ring-2 ring-slate-100/20 scale-[1.03]'
+                                    ? 'bg-red-700 border-red-700/15 text-white shadow-[0_4px_12px_rgba(185,28,28,0.25)] ring-2 ring-red-100/20 scale-[1.03]'
                                     : 'border-transparent bg-transparent hover:bg-white/90 text-slate-500 hover:text-slate-800'
                                   }`}
                                 >
@@ -2648,15 +2559,15 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                       {op1RateInfo.hasDiscount ? (
                         <div className="flex flex-col">
                           <strong className="text-sm font-bold text-[#EF4444] font-display">
-                            ₺{op1RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
+                            {currencySymbol}{op1RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
                           </strong>
                           <span className="text-[9px] text-slate-400 line-through">
-                            ₺{op1RateInfo.preDiscount?.toLocaleString('tr-TR')}
+                            {currencySymbol}{op1RateInfo.preDiscount?.toLocaleString('tr-TR')}
                           </span>
                         </div>
                       ) : (
                         <strong className="text-sm font-bold text-slate-800 font-display">
-                          ₺{op1RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
+                          {currencySymbol}{op1RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
                         </strong>
                       )}
                     </div>
@@ -2666,7 +2577,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                     <span className="text-[9px] font-bold text-slate-450 uppercase block mb-1">Toplam Proje Bütçesi</span>
                     <div className="flex items-baseline justify-between">
                       <span className={`text-2xl font-display font-black ${op1RateInfo.hasDiscount ? 'text-[#EF4444]' : 'text-slate-900'}`}>
-                        ₺{totalOp1Lira.toLocaleString('tr-TR')}
+                        {currencySymbol}{totalOp1Lira.toLocaleString('tr-TR')}
                       </span>
                       <span className={op1RateInfo.hasDiscount ? `text-sm font-semibold text-[#EF4444]/80 font-mono` : `text-xs font-semibold text-slate-450 font-mono`}>
                         ≈ €{totalOp1Eur.toLocaleString('tr-TR')}
@@ -2753,15 +2664,15 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                         {op2RateInfo.hasDiscount ? (
                           <div className="flex flex-col">
                             <strong className="text-sm font-bold text-[#EF4444] font-display">
-                              ₺{op2RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
+                              {currencySymbol}{op2RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
                             </strong>
                             <span className="text-[9px] text-slate-400 line-through">
-                              ₺{op2RateInfo.preDiscount?.toLocaleString('tr-TR')}
+                              {currencySymbol}{op2RateInfo.preDiscount?.toLocaleString('tr-TR')}
                             </span>
                           </div>
                         ) : (
                           <strong className="text-sm font-bold text-slate-800 font-display">
-                            ₺{op2RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
+                            {currencySymbol}{op2RateInfo.rate.toLocaleString('tr-TR')} <span className="text-[10px] text-slate-400 font-normal">/gün</span>
                           </strong>
                         )}
                       </div>
@@ -2771,7 +2682,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                       <span className="text-[9px] font-bold text-slate-450 uppercase block mb-1">Toplam Proje Bütçesi</span>
                       <div className="flex items-baseline justify-between">
                         <span className={`text-2xl font-display font-black ${op2RateInfo.hasDiscount ? 'text-[#EF4444]' : 'text-slate-900'}`}>
-                          ₺{totalOp2Lira.toLocaleString('tr-TR')}
+                          {currencySymbol}{totalOp2Lira.toLocaleString('tr-TR')}
                         </span>
                         <span className={op2RateInfo.hasDiscount ? `text-sm font-semibold text-[#EF4444]/80 font-mono` : `text-xs font-semibold text-slate-450 font-mono`}>
                           ≈ €{totalOp2Eur.toLocaleString('tr-TR')}
@@ -3265,6 +3176,28 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                       onChange={e => setOee(e.target.value)}
                       className="border border-slate-200 rounded-xl px-3.5 py-3 text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-red-500/10 focus:border-red-650 bg-stone-50/20 font-semibold text-slate-800"
                     />
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <label className="flex flex-col gap-1 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                        Setup Kaybı (% süre)
+                        <input type="number" step="0.1" value={setupTimePct} onChange={e => setSetupTimePct(e.target.value)} placeholder="Opsiyonel"
+                          className="border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 normal-case tracking-normal" />
+                      </label>
+                      <label className="flex flex-col gap-1 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                        Arıza Kaybı (% süre)
+                        <input type="number" step="0.1" value={breakdownPct} onChange={e => setBreakdownPct(e.target.value)} placeholder="Opsiyonel"
+                          className="border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 normal-case tracking-normal" />
+                      </label>
+                    </div>
+                    <label className="flex flex-col gap-1 text-[10px] font-extrabold text-slate-600 uppercase tracking-wider">
+                      Plana Göre Gerçekleşen Üretim (%)
+                      <input type="number" step="0.1" value={planRealizationPct} onChange={e => setPlanRealizationPct(e.target.value)} placeholder="Opsiyonel — %100 altıysa talep var sayılır"
+                        className="border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 normal-case tracking-normal" />
+                    </label>
+                    {qla.oeeBreakdown && (
+                      <span className="text-[10px] text-slate-500 font-semibold">
+                        OEE ayrıştırması: Kullanılabilirlik %{qla.oeeBreakdown.availability} × Performans %{qla.oeeBreakdown.performance} × Kalite %{qla.oeeBreakdown.quality}
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex flex-col gap-1.5 sm:col-span-2 bg-amber-500/5 p-4 rounded-2xl border border-amber-200/20 mt-1">
@@ -3280,7 +3213,20 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                       placeholder="Örn: 12"
                     />
                     <span className="text-[10px] text-amber-800/80 font-semibold mt-1 italic">
-                      * Sipariş alımından sevkiyata kadar geçen toplam takvim günü. Yalın uygulamalar (Hücresel Yerleşim, Kanban vb.) ile bu sürede %40 - %60 azalma potansiyeli bulunur.
+                      * Sipariş alımından sevkiyata kadar geçen toplam takvim günü. Stok değeri bu süreden tahmin edilir (Little Kanunu): günlük üretim maliyeti × lead time.
+                    </span>
+                    <label className="text-[10px] font-extrabold text-amber-900 tracking-wider uppercase mt-2">Toplam Stok Miktarı ({productionUnit}) — Opsiyonel</label>
+                    <input
+                      type="text"
+                      value={formatNumberWithDots(stockUnits)}
+                      onChange={e => setStockUnits(e.target.value.replace(/\D/g, ''))}
+                      className="border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-amber-950 bg-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600"
+                      placeholder="Biliniyorsa: hammadde + yarı mamul + mamul"
+                    />
+                    <span className="text-[10px] text-amber-800/80 font-semibold italic">
+                      {qla.inventory.value > 0
+                        ? <>Tahmini stok değeri: <strong>{currencySymbol}{qla.inventory.value.toLocaleString('tr-TR')}</strong> ({qla.inventory.source === 'stok adedi' ? `stok × birim maliyet ${currencySymbol}${qla.inventory.unitCost.toLocaleString('tr-TR')}` : 'lead time ile tahmin'}) · yıllık taşıma maliyeti %{Math.round(qla.inventory.carryingRate * 100)}</>
+                        : 'Lead time veya stok miktarı girilirse stok taşıma maliyeti hesaplanır.'}
                     </span>
                   </div>
 
@@ -3521,6 +3467,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                           setCostPropMaintenance((structure.bakim * 0.9).toFixed(1).replace('.0', ''));
                           setCostPropOverhead((structure.genel * 0.9).toFixed(1).replace('.0', ''));
                           setCostPropProfit('10');
+                          setCostAutoSnapshot(costSnapshotOf([structure.malzeme, structure.iscilik, structure.enerji, structure.bakim, structure.genel].map(v => (v * 0.9).toFixed(1).replace('.0', '')).concat('10')));
                         }}
                         className="text-[11px] font-bold text-indigo-750 hover:text-indigo-900 flex items-center justify-center gap-1.5 border border-indigo-200 bg-white hover:bg-indigo-50/50 px-3 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer"
                       >
@@ -3537,6 +3484,68 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                     )} üzerinden tesise ait tipik maliyet yapısı kırılımı ve tahmini parasal karşılıkları aşağıda verilmiştir. Oranları firmanızın gerçek bütçe dağılımına göre dilediğiniz gibi düzenleyebilirsiniz:
                   </p>
                   
+
+                  {/* 🌐 Sektör ortalaması önerisi (web) */}
+                  <div className="border border-sky-200 bg-sky-50/40 rounded-2xl p-4 space-y-3" id="cost-suggestion-panel">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] font-extrabold text-sky-900 uppercase tracking-wider block">🌐 Sektör Ortalaması Önerisi {costSuggestion && !costSuggestion.fromWeb ? '(Dahili Tablo)' : '(Web Araştırması)'}</span>
+                        <span className="text-[10.5px] text-sky-800/80 font-semibold">Müşteri maliyet yapısını vermezse fikir edinmek için. Onaylamadan uygulanmaz.</span>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button type="button" onClick={() => fetchCostSuggestion(true)} disabled={costSuggestLoading || !sektor}
+                          className="text-[11px] font-bold text-sky-800 border border-sky-200 bg-white hover:bg-sky-50 px-3 py-1.5 rounded-xl cursor-pointer disabled:opacity-50">
+                          {costSuggestLoading ? 'Araştırılıyor…' : 'Yeniden Araştır'}
+                        </button>
+                        <button type="button" onClick={applyCostSuggestion} disabled={!costSuggestion}
+                          className="text-[11px] font-bold text-white bg-sky-700 hover:bg-sky-800 px-3 py-1.5 rounded-xl cursor-pointer disabled:opacity-50">
+                          Önerilenleri Uygula
+                        </button>
+                      </div>
+                    </div>
+                    {!sektor && <p className="text-[11px] text-slate-500 font-semibold">Öneri için önce sektörü girin.</p>}
+                    {costSuggestLoading && !costSuggestion && <p className="text-[11px] text-slate-500 font-semibold">Sektör raporları ve şirket verileri taranıyor…</p>}
+                    {costSuggestion && (
+                      <>
+                        <table className="w-full text-[11px] border-collapse">
+                          <thead>
+                            <tr className="text-sky-900 border-b border-sky-200">
+                              <th className="text-left py-1.5">Kalem</th>
+                              <th className="text-center py-1.5">Sektör Aralığı</th>
+                              <th className="text-center py-1.5">Önerilen</th>
+                              <th className="text-center py-1.5">Mevcut Girdi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-sky-100 font-semibold text-slate-700">
+                            {([
+                              ['Malzeme', costSuggestion.malzeme, costPropMaterial],
+                              ['İşçilik', costSuggestion.iscilik, costPropLabor],
+                              ['Enerji', costSuggestion.enerji, costPropEnergy],
+                              ['Bakım', costSuggestion.bakim, costPropMaintenance],
+                              ['Genel Üretim Gideri', costSuggestion.genel, costPropOverhead],
+                              ['Faaliyet Kârı', costSuggestion.kar, costPropProfit],
+                            ] as [string, CostRange, string][]).map(([label, r, cur]) => (
+                              <tr key={label}>
+                                <td className="py-1.5">{label}</td>
+                                <td className="py-1.5 text-center font-mono">%{r.min} – %{r.max}</td>
+                                <td className="py-1.5 text-center font-mono font-bold text-sky-900">%{r.ort}</td>
+                                <td className={`py-1.5 text-center font-mono ${Number(cur) < r.min || Number(cur) > r.max ? 'text-amber-700 font-bold' : ''}`}>%{cur || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <p className="text-[10.5px] text-slate-600 font-medium">{costSuggestion.aciklama}</p>
+                        {costSuggestion.kaynaklar.length > 0 && (
+                          <div className="text-[10px] text-slate-500 font-medium space-y-0.5">
+                            <span className="font-bold text-slate-600">Kaynaklar:</span>
+                            {costSuggestion.kaynaklar.map((k, i) => (
+                              <a key={i} href={k.url} target="_blank" rel="noreferrer" className="block truncate text-sky-700 hover:underline">{k.title}</a>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                   {(() => {
                     const totalSum = Math.round(((Number(costPropMaterial) || 0) + (Number(costPropLabor) || 0) + (Number(costPropEnergy) || 0) + (Number(costPropMaintenance) || 0) + (Number(costPropOverhead) || 0) + (Number(costPropProfit) || 0)) * 10) / 10;
                     return (
@@ -3585,7 +3594,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                                 <td className="p-3 text-slate-900 font-bold">
                                   <div>Direkt İşçilik Giderleri</div>
                                   <div className="text-[10px] text-slate-400 font-semibold italic mt-0.5">
-                                    Dahili Fazla Mesai Yükü (%{overtimeRate}): {currencySymbol}{Math.round(i_base * (overtimeRateNum / 100)).toLocaleString('tr-TR')}
+                                    Dahili Fazla Mesai Yükü (%{overtimeRate}): {currencySymbol}{Math.round(i_base * (overtimeRateNum / 100)).toLocaleString('tr-TR')} · kayıp sayılan prim: {currencySymbol}{loss_mesai.toLocaleString('tr-TR')}
                                   </div>
                                 </td>
                                 <td className="p-3 text-center">
@@ -3755,7 +3764,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                         • <strong>Mevcut Durum Girdileri:</strong> Sanayi tesisi gözlemleri uyarınca plastik enjeksiyon grubu OEE değeri veritabanında <strong>%{oeeNum}</strong>, mamul hurda oranı <strong>%{scrapRateNum}</strong>, rework/tamir oranı ise <strong>%{reworkRateNum || 1.5}</strong> olarak esas alınmıştır.
                       </p>
                       <p>
-                        • <strong>Modelleme Hedef Değerleri:</strong> Geri kazanım potansiyelleri hesaplanırken, OEE oranının seçilen programa paralel şekilde kademeli olarak <strong>%{oeeNum + 10} ila %{Math.min(98, oeeNum + 18)} bandına (Ortalama %70 - %75 seviyesine)</strong> çıkarılması, hurda/fire oranının ise malzeme koruma standartlarıyla <strong>%1.0 - %1.5 aralığına</strong> indirilmesi matematiksel hedef olarak formüle yansıtılmıştır.
+                        • <strong>Modelleme Hedef Değerleri:</strong> Olgunluk skoruna göre önerilen <strong>{qla.recommended.def.name} ({qla.recommended.def.days} adam-gün)</strong> ile kayıp havuzunun <strong>%{Math.round(qla.recommended.def.recovery[0] * 100)}-{Math.round(qla.recommended.def.recovery[1] * 100)}</strong>'i geri kazanılır. Hedefler: {oeeNum > 0 ? <>OEE %{oeeNum} → <strong>%{Math.min(90, oeeNum + qla.recommended.def.kpi.oeePoints)}</strong>, </> : null}kalitesizlik oranında <strong>-%{qla.recommended.def.kpi.copq}</strong>, setup süresinde <strong>-%{qla.recommended.def.kpi.setup}</strong>.
                       </p>
                     </div>
                   </div>
@@ -3943,8 +3952,15 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
             op3_max={op3_max}
             op4_min={op4_min}
             op4_max={op4_max}
-            selectedOption={selectedOption}
-            setSelectedOption={setSelectedOption}
+            qla={qla}
+            setSelectedPackageId={setSelectedPackageId}
+            sustainYears={sustainYears}
+            setSustainYears={setSustainYears}
+            pitchFindings={getDynamicGembaFindings().slice(0, 3)}
+            maturityScore={totalScore}
+            answeredCount={answeredCount}
+            pitchInputs={{ scrapPct: scrapRateNum, reworkPct: reworkRateNum, overtimePct: overtimeRateNum, plannedEffPct: plannedEffNum, actualEffPct: actualEffNum, oeePct: oeeNum, leadTimeDays: leadTimeNum }}
+            costFromSector={costFromSector}
             leadTimeNum={leadTimeNum}
             setupDurationNum={setupDurationNum}
             oeeNum={oeeNum}
@@ -4080,7 +4096,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                     <td className="p-1.5 border text-slate-600 text-xs">{i.text}</td>
                     <td className="p-1.5 border text-center font-black text-slate-950">
                       <span className="inline-block bg-slate-100 px-2.5 py-0.5 rounded border font-mono">
-                        {scores[i.no] || 0} ({scores[i.no] === 3 ? "Geliştirilebilir" : scores[i.no] === 2 ? "Faaliyet Var" : scores[i.no] === 1 ? "Zayıf" : "İzlenmedi"})
+                        {scoreValue(scores[i.no])} ({scores[i.no] === 3 ? "Geliştirilebilir" : scores[i.no] === 2 ? "Faaliyet Var" : scores[i.no] === 1 ? "Zayıf" : scores[i.no] === 0 ? "İzlenmedi" : "Puan verilmedi"})
                       </span>
                     </td>
                   </tr>
@@ -4115,8 +4131,8 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
               <div className="border-2 border-red-500 bg-red-50/10 p-4 rounded space-y-1.5 relative">
                 <span className="font-bold text-[10px] uppercase block tracking-wider text-red-600">⭐ OPSİYON 01 — {currentProgram.op1.name} (ÖNCELİKLİ ÖNERİ){op1RateInfo.hasDiscount ? ` (%${op1RateInfo.discountPercent} İNDİRİMLİ)` : ''}</span>
                 <p><strong>Adam-Gün Süresi:</strong> {currentProgram.op1.ag} Adam Gün</p>
-                <p><strong>Birim Günlük Bedel:</strong> ₺{op1RateInfo.rate.toLocaleString('tr-TR')}</p>
-                <p className="text-sm pt-1 border-t text-red-750"><strong>Toplam Yatırım:</strong> <span className="font-bold">{totalOp1Lira.toLocaleString('tr-TR')} TRY</span> (≈ {totalOp1Eur.toLocaleString('tr-TR')} EUR)</p>
+                <p><strong>Birim Günlük Bedel:</strong> {currencySymbol}{op1RateInfo.rate.toLocaleString('tr-TR')}</p>
+                <p className="text-sm pt-1 border-t text-red-750"><strong>Toplam Yatırım:</strong> <span className="font-bold">{currencySymbol}{totalOp1Lira.toLocaleString('tr-TR')} {currency}</span> (≈ {totalOp1Eur.toLocaleString('tr-TR')} EUR)</p>
               </div>
 
               {currentProgram.op2.name === "Mevcut Değil" && currentProgram.op1.name === "Standart Gelişim Programı" ? (
@@ -4134,8 +4150,8 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                 <div className={`border p-4 rounded space-y-1.5 ${op2RateInfo.hasDiscount ? 'border-red-500 bg-red-50/5' : ''}`}>
                   <span className={`font-bold text-[10px] uppercase block tracking-wider ${op2RateInfo.hasDiscount ? 'text-red-600' : 'text-slate-400'}`}>OPSİYON 02 — {currentProgram.op2.name}{op2RateInfo.hasDiscount ? ` (%${op2RateInfo.discountPercent} İNDİRİMLİ)` : ''}</span>
                   <p><strong>Adam-Gün Süresi:</strong> {currentProgram.op2.ag} Adam Gün</p>
-                  <p><strong>Birim Günlük Bedel:</strong> ₺{op2RateInfo.rate.toLocaleString('tr-TR')}</p>
-                  <p className={`text-sm pt-1 border-t ${op2RateInfo.hasDiscount ? 'text-red-750' : ''}`}><strong>Toplam Yatırım:</strong> <span className="font-bold">{totalOp2Lira.toLocaleString('tr-TR')} TRY</span> (≈ {totalOp2Eur.toLocaleString('tr-TR')} EUR)</p>
+                  <p><strong>Birim Günlük Bedel:</strong> {currencySymbol}{op2RateInfo.rate.toLocaleString('tr-TR')}</p>
+                  <p className={`text-sm pt-1 border-t ${op2RateInfo.hasDiscount ? 'text-red-750' : ''}`}><strong>Toplam Yatırım:</strong> <span className="font-bold">{currencySymbol}{totalOp2Lira.toLocaleString('tr-TR')} {currency}</span> (≈ {totalOp2Eur.toLocaleString('tr-TR')} EUR)</p>
                   
                   {currentProgram.op2.name === "Standart Gelişim Programı" && (
                     <div className="mt-2 pt-1.5 border-t border-dashed border-slate-200 text-[10px] text-indigo-900 font-semibold leading-normal">
@@ -4333,7 +4349,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                             {/* Scoring elements breakdown lists */}
                             <div className="pt-2 border-t border-slate-105 grid grid-cols-2 gap-1.5 text-[9px] font-bold">
                               {g.items.map((item) => {
-                                const sc = scores[item.no] || 0;
+                                const sc = scoreValue(scores[item.no]);
                                 let badgeColorClass = "bg-slate-50 text-slate-400 border-slate-200/60";
                                 if (sc === 1) badgeColorClass = "bg-red-50 text-red-700 border-red-200/40";
                                 else if (sc === 2) badgeColorClass = "bg-amber-50 text-amber-700 border-amber-200/40";

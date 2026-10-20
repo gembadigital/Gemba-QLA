@@ -314,6 +314,27 @@ export function seedInitialDatabase() {
 
 // Database Operations
 export const GembaDB = {
+  // ─── ORTAK AYARLAR (tüm cihazlarda aynı: app_settings tablosu) ───
+  async getSetting<T>(key: string): Promise<T | null> {
+    const client = getSupabase();
+    if (!client) return null;
+    try {
+      const { data, error } = await client.from('app_settings').select('value').eq('key', key).maybeSingle();
+      if (error || !data) return null;
+      return data.value as T;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  async saveSetting(key: string, value: unknown): Promise<boolean> {
+    const client = getSupabase();
+    if (!client) return false;
+    const { error } = await client.from('app_settings').upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    if (error) console.warn('[Ayar kaydı başarısız]', key, error.message);
+    return !error;
+  },
+
   // Get all companies from local storage
   getCompanies(includeArchived: boolean = false): Company[] {
     seedInitialDatabase();

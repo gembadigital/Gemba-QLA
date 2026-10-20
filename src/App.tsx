@@ -312,6 +312,9 @@ const getSectorCostStructure = (sectorStr: string, productStr: string) => {
   }
 };
 
+/** Günlük danışmanlık ücreti (€) — bulutta ortak ayar yoksa kullanılır */
+const DEFAULT_DAILY_RATE_EUR = 700;
+
 // ─── PUANLAMA: -1 = puan verilmedi, 0 = İzlenmedi, 1-3 = puan ───────────────
 const UNSCORED = -1;
 /** Eski kayıtlarda "verilmedi" de 0 olarak tutuluyordu: hiç -1 yoksa 0'lar "verilmedi" sayılır */
@@ -625,11 +628,17 @@ export default function App() {
   const [adminEuroRate, setAdminEuroRate] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('gp_adminEuroRate');
-      return saved ? Number(saved) : 650;
+      return saved ? Number(saved) : DEFAULT_DAILY_RATE_EUR;
     } catch (e) {
-      return 650;
+      return DEFAULT_DAILY_RATE_EUR;
     }
   });
+  // Günlük € ücret ortak ayardır: açılışta buluttan okunur (cihazdaki değer yalnızca çevrimdışı yedek)
+  useEffect(() => {
+    GembaDB.getSetting<number>('daily_rate_eur').then(v => {
+      if (typeof v === 'number' && v > 0) setAdminEuroRate(v);
+    });
+  }, []);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [tempEuroRate, setTempEuroRate] = useState<string>(adminEuroRate.toString());
 
@@ -4454,7 +4463,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                       value={tempEuroRate}
                       onChange={(e) => setTempEuroRate(e.target.value)}
                       className="w-full border border-slate-300 rounded-xl pl-8 pr-16 py-3 text-sm font-semibold text-slate-900 focus:outline-none focus:border-slate-800 focus:ring-2 focus:ring-slate-100 transition-all"
-                      placeholder="650"
+                      placeholder="700"
                       min="1"
                     />
                     <div className="absolute inset-y-0 right-0 flex items-center pr-3">
@@ -4500,6 +4509,10 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                     const parsed = Number(tempEuroRate);
                     if (parsed && parsed > 0) {
                       setAdminEuroRate(parsed);
+                      // Tüm cihazlar aynı ücretle hesaplasın diye buluta da yazılır
+                      GembaDB.saveSetting('daily_rate_eur', parsed).then(ok => {
+                        if (!ok) alert('Ücret bu cihazda güncellendi ancak buluta kaydedilemedi; diğer cihazlar eski ücretle hesaplar.');
+                      });
                       setIsAdminOpen(false);
                     } else {
                       alert('Lütfen geçerli bir Euro bedeli giriniz.');

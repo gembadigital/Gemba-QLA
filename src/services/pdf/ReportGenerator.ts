@@ -1,118 +1,73 @@
 import { jsPDF } from 'jspdf';
 import { ReportData } from './types';
-import { SectionRenderer } from './SectionRenderer';
+import { SectionRenderer, TocMap } from './SectionRenderer';
 import { loadUnicodeFonts } from './fontLoader';
+import { Ctx, pageFooter } from './draw';
+import { REPORT } from './reportConfig';
+
+/** Logo dosyasını data URI olarak yükler (yüklenemezse metin logo kullanılır) */
+async function loadLogo(): Promise<string | null> {
+  try {
+    const res = await fetch(REPORT.logo.path);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise(resolve => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => resolve(null);
+      r.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
 
 export class ReportGenerator {
   /**
-   * Generates a complete multi-page PDF document.
-   * Employs a two-pass architecture to dynamically compute total pages and stamp headers/footers.
+   * Yönetici raporu — A4 yatay, Gemba Tools yönetici raporu tasarım dili.
+   * Sayfa sırası eski raporla aynı; saha bulguları ve aksiyon planı uzunsa devam sayfası açılır.
    */
   public static async generateReport(data: ReportData): Promise<jsPDF> {
-    // 1. Initialize jsPDF
-    const doc = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-      putOnlyUsedFonts: true,
-      floatPrecision: 16
-    });
-
-    // Load Unicode fonts dynamically
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', putOnlyUsedFonts: true, floatPrecision: 16 });
     const fontsLoaded = await loadUnicodeFonts(doc);
-    const fontName = fontsLoaded ? 'Roboto' : 'helvetica';
-    doc.setFont(fontName, 'normal');
+    const c: Ctx = { doc, font: fontsLoaded ? 'Roboto' : 'helvetica', logo: await loadLogo() };
+    doc.setFont(c.font, 'normal');
 
-    // 2. Render Page Sections
-    // Page 1: Cover Page
-    SectionRenderer.drawCoverPage(doc, data, fontName);
+    const reportNo = `QLA-${(data.company.visitDate || new Date().toISOString()).slice(2, 10).replace(/-/g, '')}`;
+    const toc: TocMap = {};
+    const page = () => doc.getNumberOfPages();
+    const next = () => doc.addPage('a4', 'landscape');
+    const section = (key: string, draw: () => void) => {
+      next();
+      toc[key] = page();
+      try {
+        draw();
+      } catch (e) {
+        console.error(`Rapor bölümü çizilemedi: ${key}`, e);
+      }
+    };
 
-    // Page 2: Table of Contents
-    doc.addPage();
-    SectionRenderer.drawTableOfContents(doc, fontName);
+    SectionRenderer.cover(c, data, reportNo);
+    next(); // içindekiler — sayfa numaraları belli olunca çizilir
+    section('exec', () => SectionRenderer.executive(c, data));
+    section('profile', () => SectionRenderer.profile(c, data));
+    section('ops', () => SectionRenderer.operations(c, data));
+    section('lean', () => SectionRenderer.lean(c, data));
+    section('obs', () => SectionRenderer.observations(c, data, next));
+    section('savings', () => SectionRenderer.savings(c, data));
+    section('ai', () => SectionRenderer.strategy(c, data));
+    section('plan', () => SectionRenderer.actionPlan(c, data, next));
+    section('end', () => SectionRenderer.conclusion(c, data));
 
-    // Page 3: Executive Summary
-    doc.addPage();
-    SectionRenderer.drawExecutiveSummary(doc, data, fontName);
+    doc.setPage(2);
+    SectionRenderer.toc(c, toc);
 
-    // Page 4: Company Profile
-    doc.addPage();
-    SectionRenderer.drawCompanyInfo(doc, data, fontName);
-
-    // Page 5: Operational KPIs
-    doc.addPage();
-    SectionRenderer.drawOperationalData(doc, data, fontName);
-
-    // Page 6: Lean Assessment & Radar Chart
-    doc.addPage();
-    SectionRenderer.drawLeanAssessment(doc, data, fontName);
-
-    // Page 7: Saha Gözlemleri (Observations) - can expand dynamically
-    doc.addPage();
-    SectionRenderer.drawObservations(doc, data, fontName);
-
-    // Page 8: Potential Savings & Pie Chart
-    doc.addPage();
-    SectionRenderer.drawPotentialSavings(doc, data, fontName);
-
-    // Page 9: AI Analysis
-    doc.addPage();
-    SectionRenderer.drawAiAnalysis(doc, data, fontName);
-
-    // Page 10: Action Plan
-    doc.addPage();
-    SectionRenderer.drawActionPlan(doc, data, fontName);
-
-    // Page 11: Conclusion and Sign-off
-    doc.addPage();
-    SectionRenderer.drawConclusion(doc, data, fontName);
-
-    // 3. Post-render pass: Inject headers, footers, and dynamic page numbering!
-    const totalPages = doc.getNumberOfPages();
-    const rDate = new Date().toLocaleDateString('tr-TR');
-    
-    // Format company name cleanly
-    let companyName = data.company.companyName || 'Gemba Danışmanlık';
-    if (companyName.length > 25) {
-      companyName = companyName.substring(0, 22) + '...';
-    }
-
-    for (let i = 2; i <= totalPages; i++) {
+    const footerLeft = `${data.company.companyName || 'Firma'} · ${REPORT.report.footerName} · No ${reportNo}`;
+    const total = doc.getNumberOfPages();
+    for (let i = 2; i <= total; i++) {
       doc.setPage(i);
-
-      // --- HEADER ---
-      // Thin slate line
-      doc.setDrawColor('#E2E8F0');
-      doc.setLineWidth(0.2);
-      doc.line(15, 15, 195, 15);
-
-      // Header Text
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor('#94A3B8');
-      doc.text('GEMBA SAHA ANALİZ VE OPERASYONEL ROI RAPORU', 15, 12);
-      
-      doc.setTextColor('#10B981'); // Accent green
-      doc.text('GEMBA PARTNER AI', 195, 12, { align: 'right' });
-
-      // --- FOOTER ---
-      // Thin slate line
-      doc.setDrawColor('#E2E8F0');
-      doc.setLineWidth(0.2);
-      doc.line(15, 280, 195, 280);
-
-      // Footer metadata (Company Name & Date)
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor('#64748B');
-      doc.text(`Firma: ${companyName.toUpperCase()}   •   Rapor Tarihi: ${rDate}`, 15, 285);
-
-      // Page Numbering
-      doc.setFont(fontName, 'bold');
-      doc.setTextColor('#475569');
-      doc.text(`Sayfa ${i} / ${totalPages}`, 195, 285, { align: 'right' });
+      pageFooter(c, footerLeft, i);
     }
-
     return doc;
   }
 }

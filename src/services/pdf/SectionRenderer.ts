@@ -1,1079 +1,550 @@
-import { jsPDF } from 'jspdf';
+// Rapor sayfaları — içerik ve sıra eski raporla aynı (11 sayfa), tasarım dili Gemba Tools
+// yönetici raporunun dili: A4 yatay, tek cümlelik ana mesaj, kartlar, ince tablolar, vektörel grafik.
 import { ReportData } from './types';
-import { ChartRenderer } from './ChartRenderer';
-import { TableRenderer, TableColumn } from './TableRenderer';
+import { COLOR, REPORT, MATURITY_LEVELS, MATURITY_MAX, levelOf, ACTION_BY_LOSS } from './reportConfig';
+import {
+  Ctx, PAGE, CW, setText, label, para, headline, card, pill, pageHeader, coverShapes, logo, table,
+  levelBand, radar, hbars, money, moneyShort, unitOf, Seg, Cell,
+} from './draw';
+import { CRITERIA } from '../../data/criteria';
+
+const num = (v: any) => Number(String(v ?? '').replace(/\./g, '').replace(',', '.')) || 0;
+const has = (v: any) => num(v) > 0;
+/** Girilen ham değeri Türkçe ondalıkla yazar (7.5 → 7,5) */
+const tr = (v: any) => String(v ?? '').replace(/^(\d+)\.(\d+)$/, '$1,$2');
+const fmtNum = (n: number, d = 1) => n.toLocaleString('tr-TR', { maximumFractionDigits: d });
+const fmtDate = (d?: string) => {
+  if (!d) return '-';
+  const t = new Date(d);
+  return isNaN(t.getTime()) ? d : t.toLocaleDateString('tr-TR');
+};
+const PRIORITY_COLOR: Record<string, string> = { Kritik: COLOR.bad, 'Yüksek': COLOR.amber, Orta: COLOR.good, 'Düşük': COLOR.muted };
+
+/** Sayfa numaraları (içindekiler için) */
+export type TocMap = Record<string, number>;
 
 export class SectionRenderer {
-  private static themePrimary = '#0F172A'; // Deep Slate
-  private static themeSecondary = '#475569'; // Muted Slate
-  private static themeAccent = '#10B981'; // Emerald
-  private static themeDanger = '#E11D48'; // Rose
-  
-  /**
-   * Helper to draw Section Heading
-   */
-  private static drawSectionHeader(doc: jsPDF, title: string, subtitle?: string, yPos: number = 25, fontName: string = 'Roboto'): number {
-    doc.setFont(fontName, 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(this.themePrimary);
-    doc.text(title, 15, yPos);
-
-    doc.setDrawColor(this.themeAccent);
-    doc.setLineWidth(1);
-    doc.line(15, yPos + 3, 60, yPos + 3);
-
-    if (subtitle) {
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(9);
-      doc.setTextColor(this.themeSecondary);
-      doc.text(subtitle, 15, yPos + 8);
-      return yPos + 12;
-    }
-
-    return yPos + 7;
-  }
-
-  /**
-   * Helper to draw a fallback error notice inside a section if it fails
-   */
-  private static drawErrorFallback(doc: jsPDF, sectionName: string, error: any, yPos: number, fontName: string = 'Roboto'): number {
-    console.error(`Error rendering section ${sectionName}:`, error);
-    doc.setFillColor('#FEF2F2');
-    doc.setDrawColor('#FCA5A5');
-    doc.setLineWidth(0.5);
-    doc.rect(15, yPos, 180, 20, 'FD');
-
-    doc.setFont(fontName, 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor('#991B1B');
-    doc.text(`[Hata] ${sectionName} render edilemedi`, 20, yPos + 8);
-
-    doc.setFont(fontName, 'normal');
-    doc.setFontSize(8.5);
-    doc.setTextColor('#7F1D1D');
-    doc.text('Bu bolumde veri bulunamadi veya PDF olusturulurken teknik bir hata olustu.', 20, yPos + 14);
-
-    return yPos + 25;
-  }
-
-  /**
-   * 1. COVER PAGE
-   */
-  public static drawCoverPage(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      // Background geometric accents
-      doc.setFillColor('#F8FAFC');
-      doc.rect(0, 0, 210, 297, 'F');
-
-      // Top dark banner
-      doc.setFillColor(this.themePrimary);
-      doc.rect(0, 0, 210, 110, 'F');
-
-      // Accent colored line
-      doc.setFillColor(this.themeAccent);
-      doc.rect(0, 110, 210, 6, 'F');
-
-      // Header Text
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(26);
-      doc.setTextColor('#FFFFFF');
-      doc.text('GEMBA QLA', 20, 50);
-      doc.text('QUICK LOSS ANALYZER REPORT', 20, 63);
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(11);
-      doc.setTextColor('#94A3B8');
-      doc.text('Saha Analizi, Operational KPI Tanımlama ve ROI Simülatörü', 20, 75);
-
-      // Diamond shape abstract logo/artwork
-      doc.setDrawColor('#38BDF8');
-      doc.setLineWidth(1.5);
-      doc.line(160, 40, 180, 60);
-      doc.line(180, 60, 160, 80);
-      doc.line(160, 80, 140, 60);
-      doc.line(140, 60, 160, 40);
-
-      doc.setDrawColor('#10B981');
-      doc.line(160, 45, 175, 60);
-      doc.line(175, 60, 160, 75);
-      doc.line(160, 75, 145, 60);
-      doc.line(145, 60, 160, 45);
-
-      // Company info frame
-      const frameY = 140;
-      doc.setFillColor('#FFFFFF');
-      doc.setDrawColor('#E2E8F0');
-      doc.setLineWidth(0.5);
-      doc.rect(15, frameY, 180, 120, 'FD');
-
-      // Double borders
-      doc.rect(17, frameY + 2, 176, 116, 'D');
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(18);
-      doc.setTextColor(this.themePrimary);
-      
-      // Limit company name length
-      let cName = data.company.companyName || 'Aktif Firma';
-      if (cName.length > 35) cName = cName.substring(0, 32) + '...';
-      doc.text(cName, 25, frameY + 18);
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(this.themeSecondary);
-      doc.text('SAHA VE DEĞERLENDİRME DETAYLARI', 25, frameY + 32);
-      
-      // Separator line
-      doc.setDrawColor('#F1F5F9');
-      doc.setLineWidth(1);
-      doc.line(25, frameY + 35, 170, frameY + 35);
-
-      // Meta grid
-      const meta = [
-        { label: 'Sektör:', val: data.company.sector || 'Belirtilmedi' },
-        { label: 'Konum / Saha:', val: data.company.location || 'Belirtilmedi' },
-        { label: 'Baş Danışman:', val: data.company.consultant || 'Gemba Digital Danışmanlık' },
-        { label: 'Ziyaret Tarihi:', val: data.company.visitDate || '-' },
-        { label: 'Rapor Tarihi:', val: new Date().toLocaleDateString('tr-TR') },
-        { label: 'Çalışma Durumu:', val: data.company.status === 'Completed' ? 'Tamamlandı' : 'Aktif Analiz' }
-      ];
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(10);
-      meta.forEach((item, index) => {
-        const x = index % 2 === 0 ? 25 : 100;
-        const y = frameY + 47 + Math.floor(index / 2) * 18;
-        
-        doc.setFont(fontName, 'bold');
-        doc.setTextColor(this.themeSecondary);
-        doc.text(item.label, x, y);
-        
-        doc.setFont(fontName, 'normal');
-        doc.setTextColor(this.themePrimary);
-        doc.text(String(item.val), x, y + 5);
-      });
-
-      // Bottom footer decoration
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor('#94A3B8');
-      doc.text('GEMBA DIGITAL® CONSULTING ENGINE  •  WWW.GEMBADIGITAL.COM', 105, 282, { align: 'center' });
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Kapak Sayfasi', e, 50, fontName);
-    }
-  }
-
-  /**
-   * 2. TABLE OF CONTENTS
-   */
-  public static drawTableOfContents(doc: jsPDF, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, 'İÇİNDEKİLER', 'Rapor içeriği ve sayfa dizini', 25, fontName);
-
-      const indexItems = [
-        { name: '1. Yönetici Özeti ve Performans İndeksi', page: '3' },
-        { name: '2. Firma Profili ve Üretim Bilgileri', page: '4' },
-        { name: '3. Operasyonel KPI Gözlem Verileri', page: '5' },
-        { name: '4. Yalın Olgunluk (Lean Assessment) Değerlendirmesi', page: '6' },
-        { name: '5. Detaylı Saha Bulguları ve Gözlem Matrisi', page: '7' },
-        { name: '6. Finansal Potansiyel Geri Kazanım ve ROI Simülasyonu', page: '8' },
-        { name: '7. Yapay Zeka (AI Partner) Analiz ve Stratejik Öneriler', page: '9' },
-        { name: '8. Önceliklendirilmiş Yalın Aksiyon Planı', page: '10' },
-        { name: '9. Sonuç ve Yatırım Dönüş Değerlendirmesi', page: '11' }
-      ];
-
-      let y = 60;
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(10.5);
-      
-      indexItems.forEach((item) => {
-        doc.setTextColor(this.themePrimary);
-        doc.text(item.name, 15, y);
-
-        // Dot leaders
-        doc.setTextColor('#94A3B8');
-        const dots = '.'.repeat(75 - Math.round(item.name.length * 0.9));
-        doc.text(dots, 15 + doc.getTextWidth(item.name) + 2, y);
-
-        doc.setTextColor(this.themeAccent);
-        doc.setFont(fontName, 'bold');
-        doc.text(`Sayfa ${item.page}`, 178, y);
-        doc.setFont(fontName, 'normal');
-
-        y += 18;
-      });
-
-      // Graphic frame box for aesthetic appeal
-      doc.setFillColor('#F8FAFC');
-      doc.setDrawColor('#E2E8F0');
-      doc.rect(15, 215, 180, 45, 'FD');
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(9.5);
-      doc.setTextColor(this.themePrimary);
-      doc.text('KULLANIM VE GİZLİLİK NOTU', 22, 227);
-      
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(this.themeSecondary);
-      doc.text('Bu rapor Gemba Digital tarafindan firmaya ozel olarak uretilmistir. Rapor icerisindeki', 22, 234);
-      doc.text('finansal projeksiyonlar, kayip verileri ve iyilesme oranlari saha tespiti ve isletme beyanlarina', 22, 239);
-      doc.text('dayanmaktadir. Ucuncu sahislarla paylasilamaz, kopyalanamaz veya yetkisiz yayinlanamaz.', 22, 244);
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Icindekiler', e, 50, fontName);
-    }
-  }
-
-  /**
-   * 3. EXECUTIVE SUMMARY
-   */
-  public static drawExecutiveSummary(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '1. YÖNETİCİ ÖZETİ', 'Üst düzey performans analizi ve finansal bulgular', 25, fontName);
-
-      const turnoverText = data.operation.turnoverLira || '150.000.000';
-      const turnoverVal = Number(turnoverText.replace(/\./g, '')) || 150000000;
-      const copqPool = Math.round(turnoverVal * 0.10);
-      const overallScore = data.assessment.overallScore || 0;
-
-      // Draw 4 bento KPI cards
-      const cards = [
-        { title: 'YALIN SCORE', val: `${overallScore} / 100`, color: this.themePrimary, textCol: '#FFFFFF', desc: 'Olgunluk Seviyesi' },
-        { title: 'POTANSİYEL KAYIP (COPQ)', val: `${copqPool.toLocaleString('tr-TR')} ₺`, color: this.themeDanger, textCol: '#FFFFFF', desc: 'Yıllık Kaçan Bütçe' },
-        { title: 'ROI ORANI', val: `${data.assessment.paybackPeriod > 0 ? (12 / data.assessment.paybackPeriod).toFixed(1) : '6.5'}x`, color: this.themeAccent, textCol: '#FFFFFF', desc: 'Tahmini Yatırım Çarpanı' },
-        { title: 'GERİ ÖDEME (PAYBACK)', val: `${data.assessment.paybackPeriod || '3-6'} Ay`, color: '#4F46E5', textCol: '#FFFFFF', desc: 'Amortisman Süresi' }
-      ];
-
-      cards.forEach((card, idx) => {
-        const x = 15 + (idx % 2) * 92;
-        const y = 50 + Math.floor(idx / 2) * 35;
-
-        doc.setFillColor(card.color);
-        doc.rect(x, y, 88, 30, 'F');
-        
-        // Slight bottom border to cards
-        doc.setFillColor('#0F172A');
-        doc.rect(x, y + 28, 88, 2, 'F');
-
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(8.5);
-        doc.setTextColor(card.textCol);
-        doc.text(card.title, x + 6, y + 8);
-
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(16);
-        doc.text(card.val, x + 6, y + 19);
-
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(7.5);
-        doc.text(card.desc, x + 6, y + 25);
-      });
-
-      // Executive evaluation text
-      let yPos = 130;
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(this.themePrimary);
-      doc.text('GENEL DEĞERLENDİRME VE İLERLEME YOLU', 15, yPos);
-      
-      doc.setDrawColor('#E2E8F0');
-      doc.line(15, yPos + 2, 195, yPos + 2);
-      yPos += 8;
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(9);
-      doc.setTextColor('#334155');
-      
-      const evalText = `Yapılan saha analizleri doğrultusunda tesisin genel yalın üretim olgunluk skoru 100 üzerinden ${overallScore} olarak hesaplanmıştır. Bu skor, tesiste henüz standartlaştırılmamış bir operasyonel akışın ve yüksek miktarda israfın bulunduğunu teyit etmektedir. Cironun tam %10'u seviyesinde olan Kalitesizlik Maliyeti (COPQ) havuzu (${copqPool.toLocaleString('tr-TR')} ₺/Yıl) firmanın kârlılığını ciddi oranda törpülemektedir.
-
-Yalın dönüşüm araçlarının (SMED, 5S, TPM Otonom Bakım ve Poka-Yoke) entegre edilmesiyle bu kayıp havuzunun minimum %20'si ila %30'unun çok kısa vadede geri kazandırılması mümkündür. Önerilen ilk 5 öncelikli aksiyon aşağıda özetlenmiştir:`;
-
-      const splitEval = doc.splitTextToSize(evalText, 180);
-      doc.text(splitEval, 15, yPos);
-      yPos += splitEval.length * 4.5 + 4;
-
-      // Proposed Initial Actions
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(this.themePrimary);
-      doc.text('ÖNERİLEN İLK 5 ÖNCELİKLİ YALIN AKSİYON', 15, yPos);
-      yPos += 5;
-
-      const actions = [
-        { act: 'Kalıp Değişim Sürelerinde SMED Metodolojisi', desc: 'Setup sürelerinin video analizleri ile %50 azaltılması.' },
-        { act: 'Pilot Alanda 5S ve Görsel Yönetim standardizasyonu', desc: 'Arama kayıplarının önlenmesi ve İSG risklerinin azaltılması.' },
-        { act: 'Operatörler İçin Otonom Bakım (TPM) Başlangıcı', desc: 'Günlük temizlik, yağlama ve sıkma listelerinin oluşturulması.' },
-        { act: 'Hata Önleyici Poka-Yoke Mekanizmaları', desc: 'Kalite hatalarının bir sonraki istasyona geçmesini önleme.' },
-        { act: 'Canlı OEE ve Duruş Analizi Takip Panosu', desc: 'Vardiya bazlı veri disiplini ve kayıp kök neden tespiti.' }
-      ];
-
-      actions.forEach((item, idx) => {
-        // Bullet marker
-        doc.setFillColor(this.themeAccent);
-        doc.circle(18, yPos + 2, 1.5, 'F');
-
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(this.themePrimary);
-        doc.text(`${idx + 1}. ${item.act}`, 22, yPos + 3);
-
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(8.5);
-        doc.setTextColor(this.themeSecondary);
-        doc.text(`: ${item.desc}`, 22 + doc.getTextWidth(`${idx + 1}. ${item.act}`), yPos + 3);
-
-        yPos += 7;
-      });
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Yonetici Ozeti', e, 50, fontName);
-    }
-  }
-
-  /**
-   * 4. COMPANY PROFILE
-   */
-  public static drawCompanyInfo(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '2. FİRMA PROFİLİ VE ÜRETİM ALTYAPISI', 'Tesisin fiziksel ve organizasyonel kapasitesi', 25, fontName);
-
-      const cols: TableColumn[] = [
-        { header: 'Operasyonel Altyapı Parametresi', width: 110 },
-        { header: 'Beyan Edilen Değer', width: 70, align: 'center' }
-      ];
-
-      // Safe parse
-      const mCount = data.operation.setupMachineCount || '0';
-      const oCount = data.operation.operatorsCount || '0';
-      const aVolume = data.operation.annualVolume || '0';
-      const pUnit = data.operation.productionUnit || 'Adet';
-      const cArea = data.operation.coveredArea || '0';
-      const tLira = data.operation.turnoverLira || '0';
-
-      const rows = [
-        ['Sektörel Faaliyet Alanı', data.company.sector || 'Genel İmalat'],
-        ['Makine / Hat Sayısı (Setup Etkili)', `${mCount} Adet`],
-        ['Saha Çalışan Sayısı (Mavi Yaka)', `${oCount} Operatör`],
-        ['Yıllık Üretim Hacmi', `${aVolume} ${pUnit}`],
-        ['Saha Kapalı Alanı', `${cArea} m²`],
-        ['Yıllık Toplam Ciro Projeksiyonu', `${tLira} ₺`],
-        ['Danışman / Değerlendirmeyi Yapan', data.company.consultant || '-'],
-        ['Analiz Durumu', data.company.status === 'Completed' ? 'Analiz Tamamlandı' : 'Taslak Veri Girişi']
-      ];
-
-      TableRenderer.drawTable(doc, cols, rows, 15, 50, () => {}, this.themePrimary, '#1E293B', '#F8FAFC');
-
-      // Add a nice visual diagram box of the production cost proportions
-      const yBox = 145;
-      doc.setFillColor('#F8FAFC');
-      doc.setDrawColor('#E2E8F0');
-      doc.rect(15, yBox, 180, 85, 'FD');
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10.5);
-      doc.setTextColor(this.themePrimary);
-      doc.text('MALİYET KIRIILIMI VE PROPORSIYONU', 25, yBox + 12);
-
-      // Separator
-      doc.setDrawColor('#E2E8F0');
-      doc.line(25, yBox + 15, 185, yBox + 15);
-
-      const costs = [
-        { label: 'Hammadde / Malzeme Maliyeti:', val: `${data.operation.costPropMaterial || '50'}%`, col: '#4F46E5' },
-        { label: 'Direkt İşçilik Maliyeti:', val: `${data.operation.costPropLabor || '20'}%`, col: '#10B981' },
-        { label: 'Enerji Giderleri:', val: `${data.operation.costPropEnergy || '10'}%`, col: '#F59E0B' },
-        { label: 'Bakım ve Yedek Parça Maliyeti:', val: `${data.operation.costPropMaintenance || '10'}%`, col: '#EF4444' },
-        { label: 'Genel Giderler / Overhead:', val: `${data.operation.costPropOverhead || '10'}%`, col: '#8B5CF6' }
-      ];
-
-      // Draw cost share percentages with elegant visual bars
-      costs.forEach((cost, idx) => {
-        const y = yBox + 26 + idx * 11;
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(this.themeSecondary);
-        doc.text(cost.label, 25, y);
-
-        doc.setFont(fontName, 'bold');
-        doc.setTextColor(this.themePrimary);
-        doc.text(cost.val, 115, y);
-
-        // Draw progress bar
-        const pct = parseInt(cost.val.replace('%', '')) || 0;
-        doc.setFillColor('#E2E8F0');
-        doc.rect(130, y - 3, 45, 4, 'F');
-
-        doc.setFillColor(cost.col);
-        doc.rect(130, y - 3, (pct / 100) * 45, 4, 'F');
-      });
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Firma Profili', e, 50, fontName);
-    }
-  }
-
-  /**
-   * 5. OPERATIONAL DATA
-   */
-  public static drawOperationalData(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '3. OPERASYONEL VERİLER VE ANAHTAR PARAMETRELER', 'Süreç performans göstergeleri ve kalitesizlik havuzu', 25, fontName);
-
-      const cols: TableColumn[] = [
-        { header: 'Operasyonel Gösterge (KPI)', width: 85 },
-        { header: 'Planlanan / Hedef', width: 45, align: 'center' },
-        { header: 'Gerçekleşen (Fiili)', width: 50, align: 'center' }
-      ];
-
-      // Girilmemiş veri demo rakamla doldurulmaz: "Veri yok" yazılır
-      const op = data.operation;
-      const has = (v: any) => v !== undefined && v !== null && String(v).trim() !== '' && Number(String(v).replace(',', '.')) !== 0;
-      const pct = (v: any) => has(v) ? `%${v}` : 'Veri yok';
-      const unit = (v: any, u: string) => has(v) ? `${v} ${u}` : 'Veri yok';
-
-      const rows = [
-        ['Toplam Ekipman Etkinliği (OEE)', '%85.0 (Dünya Klası)', has(op.oee) ? `%${op.oee}` : 'Ölçülmüyor'],
-        ['Hat / Proses Verimliliği', has(op.plannedEfficiency) ? `%${op.plannedEfficiency}` : '-', pct(op.actualEfficiency)],
-        ['Kalitesizlik Maliyet Oranı (COPQ)', '%2.5', pct(op.copqRate)],
-        ['Iskarta / Hurda Oranı', '%0.5', pct(op.scrapRate)],
-        ['Tamir / Rework Oranı', '%1.0', pct(op.reworkRate)],
-        ['Fazla Mesai Çalışma Oranı', '%3.0', pct(op.overtimeRate)],
-        ['Üretim Çevrim ve Akış Süresi (Lead Time)', '7 Gün', unit(op.leadTime, 'Gün')],
-        ['Vardiya Başına Model Değişim (Setup) Sıklığı', '1-2 Değişim', unit(op.setupFrequency, 'Setup')],
-        ['Ortalama Setup Duruş Süresi', '15 Dakika', unit(op.setupDuration, 'Dakika')],
-        ['Aylık Brüt Operatör Maliyeti', '40.000 ₺', `${data.operation.grossLaborCost || '48.000'} ₺`]
-      ];
-
-      TableRenderer.drawTable(doc, cols, rows, 15, 50, () => {}, this.themePrimary, '#1E293B', '#F8FAFC');
-
-      // KPI interpretation alert box
-      const alertY = 155;
-      doc.setFillColor('#FEF3C7');
-      doc.setDrawColor('#F59E0B');
-      doc.setLineWidth(0.4);
-      doc.rect(15, alertY, 180, 25, 'FD');
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(9.5);
-      doc.setTextColor('#78350F');
-      doc.text('KRİTİK KPI EŞİKLERİ VE DARBOĞAZ ALARMI', 20, alertY + 7);
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(8.2);
-      doc.setTextColor('#92400E');
-      
-      // Yorum yalnızca girilmiş verilerden kurulur
-      const parts: string[] = [];
-      if (has(op.oee)) parts.push(`%${op.oee} OEE`);
-      if (has(op.copqRate)) parts.push(`%${op.copqRate} kalitesizlik maliyeti (COPQ)`);
-      const interpret = (parts.length
-        ? `Mevcut ${parts.join(' ve ')} değerleri, operasyonel kayıpların ciddi bir finansal israfa yol açtığını göstermektedir. `
-        : 'Operasyonel veriler kısmen ölçülebildiğinden yorum saha gözlemlerine dayanmaktadır. ')
-        + (has(op.setupDuration) ? `Kurulum (setup) sürelerinin ${op.setupDuration} dakika seviyesinde olması planlama esnekliğini sınırlamaktadır.` : '');
-      
-      const splitInterpret = doc.splitTextToSize(interpret, 170);
-      doc.text(splitInterpret, 20, alertY + 12);
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Operasyonel Veriler', e, 50, fontName);
-    }
-  }
-
-  /**
-   * 6. LEAN ASSESSMENT RESULTS (WITH RADAR CHART)
-   */
-  public static drawLeanAssessment(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '4. YALIN OLGUNLUK (LEAN ASSESSMENT) SEVİYESİ', '17 Temel yalın kategoriye göre olgunluk analizi', 25, fontName);
-
-      // Compute aggregated scores for categories to render clean radar & bar chart
-      const categories = [
-        '5S & Düzen', 'Standart İş', 'SMED (Kurulum)', 'Otonom Bakım',
-        'Planlı Bakım', 'Poka-Yoke', 'VSM (Akış)', 'Kazan / İsraf'
-      ];
-      
-      // Programmatic values
-      const scores = data.operation.scores || {};
-      const aggScores = [3, 2, 1, 2, 2, 1, 2, 3]; // Fallback if empty
-      
-      // Calculate real scores if scores record exists
-      if (Object.keys(scores).length > 0) {
-        categories.forEach((cat, idx) => {
-          // Average some scores mapping
-          const start = idx * 2 + 1;
-          const s1 = Math.max(0, Number(scores[start]) || 0);
-          const s2 = Math.max(0, Number(scores[start + 1]) || 0);
-          aggScores[idx] = Math.round((s1 + s2) / 2);
-        });
+  // ---------- 1. KAPAK ----------
+  static cover(c: Ctx, d: ReportData, reportNo: string) {
+    const doc = c.doc;
+    doc.setFillColor(COLOR.white);
+    doc.rect(0, 0, PAGE.w, PAGE.h, 'F');
+    coverShapes(c);
+    logo(c, 18, 18, 13);
+
+    setText(c, 6.8, COLOR.red, true);
+    doc.setCharSpace(0.45);
+    doc.text(REPORT.report.kicker, 18, 60);
+    doc.setCharSpace(0);
+    setText(c, 27, COLOR.ink, true);
+    REPORT.report.titleLines.forEach((t, i) => doc.text(t, 17, 72 + i * 11));
+    setText(c, 11, COLOR.muted);
+    doc.text(REPORT.report.subtitle, 18, 72 + REPORT.report.titleLines.length * 11 - 2);
+
+    const firma = d.company.companyName || 'Firma';
+    doc.setFillColor(COLOR.red);
+    doc.rect(18, 103, 0.9, 14, 'F');
+    label(c, 'Hazırlanan kurum', 22.5, 107);
+    setText(c, 15, COLOR.ink, true);
+    doc.text(firma, 22.5, 114.5, { maxWidth: 135 });
+
+    // Doküman bilgi tablosu
+    const x = 18, w = 128, y0 = 130;
+    const rows: [string, string, string?, string?][] = [
+      ['Rapor no', reportNo, 'Versiyon', REPORT.report.version],
+      ['Saha ziyareti', fmtDate(d.company.visitDate), 'Rapor tarihi', new Date().toLocaleDateString('tr-TR')],
+      ['Değerlendiren', d.company.consultant || '-'],
+      ['Görüşülen', d.operation.gorusulen || '-'],
+      ['Sektör', [d.company.sector, d.company.location].filter(Boolean).join(' · ') || '-'],
+      ['Gizlilik', REPORT.report.confidentiality.replace('{firma}', firma)],
+    ];
+    let y = y0;
+    rows.forEach(r => {
+      const four = r.length === 4;
+      const lines = doc.splitTextToSize(r[1], four ? 30 : w - 34) as string[];
+      const h = Math.max(6.5, lines.length * 3.4 + 3);
+      doc.setDrawColor(COLOR.line); doc.setLineWidth(0.25);
+      doc.setFillColor(COLOR.soft);
+      doc.rect(x, y, 30, h, 'FD');
+      label(c, r[0], x + 2, y + h / 2 + 1);
+      doc.rect(x + 30, y, four ? 34 : w - 30, h, 'S');
+      setText(c, 7.4, COLOR.ink, r[0] === 'Gizlilik');
+      lines.forEach((ln, i) => doc.text(ln, x + 32, y + 4.4 + i * 3.4));
+      if (four) {
+        doc.setFillColor(COLOR.soft);
+        doc.rect(x + 64, y, 30, h, 'FD');
+        label(c, r[2]!, x + 66, y + h / 2 + 1);
+        doc.rect(x + 94, y, w - 94, h, 'S');
+        setText(c, 7.4, COLOR.ink);
+        doc.text(r[3]!, x + 96, y + 4.4);
       }
+      y += h;
+    });
 
-      // 1. Draw Category Scores Table
-      const cols: TableColumn[] = [
-        { header: 'Değerlendirilen Yalın Kategori', width: 110 },
-        { header: 'Skor (0-4)', width: 35, align: 'center' },
-        { header: 'Olgunluk Durumu', width: 35, align: 'center' }
-      ];
-
-      const getOlgunluk = (s: number) => {
-        if (s >= 3.5) return 'Mükemmel';
-        if (s >= 2.5) return 'İyi';
-        if (s >= 1.5) return 'Orta Seviye';
-        return 'Başlangıç / Kritik';
-      };
-
-      const rows = categories.map((cat, idx) => {
-        const val = aggScores[idx];
-        return [cat, `${val} / 4`, getOlgunluk(val)];
-      });
-
-      let currentY = TableRenderer.drawTable(doc, cols, rows, 15, 50, () => {}, this.themePrimary, '#1E293B', '#F8FAFC');
-
-      // 2. Render and Add Radar Chart dynamically!
-      currentY += 8;
-      
-      if (currentY + 80 > 270) {
-        doc.addPage();
-        currentY = 25;
-      }
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10.5);
-      doc.setTextColor(this.themePrimary);
-      doc.text('YALIN OLGUNLUK RADAR DAĞILIMI', 15, currentY);
-
-      // Generate offscreen radar chart
-      const radarBase64 = ChartRenderer.renderRadarChart(categories, aggScores, 'Süreç Olgunluk Endeksi (World Class Target: 4)', 4);
-      
-      if (radarBase64) {
-        // Add chart image to PDF
-        doc.addImage(radarBase64, 'PNG', 15, currentY + 3, 180, 80);
-      } else {
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(this.themeSecondary);
-        doc.text('Grafik olusturulamadi.', 20, currentY + 15);
-      }
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Yalin Degerlendirme', e, 50, fontName);
-    }
+    // Alt koyu şerit
+    doc.setFillColor(COLOR.ink);
+    doc.rect(5, 182, 256, 8, 'F');
+    setText(c, 6.6, COLOR.white, true);
+    doc.setCharSpace(0.4);
+    doc.text(REPORT.company.legalName, 14, 187.2);
+    doc.text(REPORT.company.website, 252, 187.2, { align: 'right' });
+    doc.setCharSpace(0);
   }
 
-  /**
-   * 7. DETAILED OBSERVATIONS WITH PHOTOS
-   */
-  public static drawObservations(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '5. SAHA BULGULARI VE GÖZLEM MATRİSİ', 'Saha turu sırasında fotoğraflanan problemler ve önerilen çözümler', 25, fontName);
+  // ---------- 2. İÇİNDEKİLER (sayfa numaraları sonda doldurulur) ----------
+  static toc(c: Ctx, toc: TocMap) {
+    const doc = c.doc;
+    pageHeader(c, 'İçindekiler');
+    setText(c, 18, COLOR.ink, true);
+    doc.text('İçindekiler', PAGE.mx, 32);
+    const items: [string, string, string][] = [
+      ['exec', 'Yönetici özeti', 'Kayıp havuzu · olgunluk · geri ödeme · öncelikli aksiyonlar'],
+      ['profile', 'Firma profili ve üretim altyapısı', 'Kapasite, ciro ve maliyet yapısı'],
+      ['ops', 'Operasyonel veriler', 'KPI gerçekleşenleri ve referans değerler'],
+      ['lean', 'Yalın olgunluk değerlendirmesi', '17 kriter · 6 grup · radar'],
+      ['obs', 'Saha bulguları', 'Tespitler ve önerilen iyileştirmeler'],
+      ['savings', 'Potansiyel kazanımlar', 'Kayıp dağılımı ve geri kazanım matrisi'],
+      ['ai', 'Stratejik değerlendirme', 'Riskler, fırsatlar ve yol haritası'],
+      ['plan', 'Aksiyon planı', 'Öncelik, sorumlu ve termin'],
+      ['end', 'Sonuç ve yatırım dönüşü', 'Kazanım özeti ve onay'],
+    ];
+    let y = 46;
+    items.forEach(([key, title, desc], i) => {
+      doc.setFillColor(COLOR.ink);
+      doc.circle(PAGE.mx + 3.2, y - 1.2, 3.2, 'F');
+      setText(c, 7.6, COLOR.white, true);
+      doc.text(String(i + 1), PAGE.mx + 3.2, y + 0.1, { align: 'center' });
+      setText(c, 10, COLOR.ink, true);
+      doc.text(title, PAGE.mx + 10, y - 0.6);
+      setText(c, 7, COLOR.muted);
+      doc.text(desc, PAGE.mx + 10, y + 3.4);
+      setText(c, 11, COLOR.red, true);
+      doc.text(String(toc[key] ?? ''), 200, y + 0.6, { align: 'right' });
+      doc.setDrawColor(COLOR.line); doc.setLineWidth(0.2);
+      doc.line(PAGE.mx + 10, y + 6, 200, y + 6);
+      y += 15;
+    });
+    card(c, 212, 46, CW - 198, 52);
+    label(c, 'Kullanım ve gizlilik', 217, 54);
+    para(c, 'Bu rapor firmaya özel olarak hazırlanmıştır. Finansal projeksiyonlar, kayıp verileri ve iyileşme oranları saha tespitlerine ve işletme beyanlarına dayanır; ±%20 tahmin bandı içinde değerlendirilmelidir. Üçüncü kişilerle paylaşılamaz.', 217, 60, CW - 208, 7.6, COLOR.ink);
+  }
 
-      const obsList = data.observations || [];
+  // ---------- 3. YÖNETİCİ ÖZETİ ----------
+  static executive(c: Ctx, d: ReportData) {
+    const doc = c.doc;
+    const m = d.metrics;
+    const unit = unitOf(m?.currency || 'TRY');
+    pageHeader(c, 'Yönetici özeti');
+    const q = m?.qla && m.qla.totalLoss > 0 ? m.qla : undefined;
+    const rec = q?.recommended;
+    const score = m?.maturityScore ?? d.assessment.overallScore ?? 0;
+    const lvl = levelOf(score);
+    if (q && q.totalLoss > 0 && rec) {
+      headline(c, [
+        { t: 'Yıllık ' }, { t: `${moneyShort(q.totalLoss, unit)} kayıp`, red: true },
+        { t: ` — cironun %${fmtNum(q.lossPctOfTurnover)}'i. ${rec.def.name} ile yılda ${moneyShort(rec.gainMin, unit)} – ${moneyShort(rec.gainMax, unit)} geri kazanılabilir.` },
+      ]);
+    } else headline(c, [{ t: 'Kayıp hesabı için operasyonel veriler henüz tamamlanmadı.' }]);
 
-      if (obsList.length === 0) {
-        doc.setFillColor('#F8FAFC');
-        doc.setDrawColor('#E2E8F0');
-        doc.rect(15, 50, 180, 25, 'FD');
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(9.5);
-        doc.setTextColor(this.themeSecondary);
-        doc.text('Henüz girilmiş bir saha gözlemi bulunmamaktadır.', 22, 65);
-        return;
-      }
+    const L = PAGE.mx, LW = 150, R = L + LW + 4, RW = CW - LW - 4;
+    // Sol üst: kayıp havuzu
+    card(c, L, 42, LW, 60);
+    label(c, 'Yıllık kayıp havuzu', L + 5, 49);
+    setText(c, 30, COLOR.ink, true);
+    const big = q ? moneyShort(q.totalLoss, unit) : 'Veri girilmedi';
+    doc.text(big, L + 5, 63);
+    const bigW = doc.getTextWidth(big);
+    setText(c, 10, COLOR.muted);
+    if (q) doc.text('/ yıl', L + 7 + bigW, 63);
+    if (q) {
+      para(c, `Cironun %${fmtNum(q.lossPctOfTurnover)}'i · ±%20 bant ${moneyShort(q.totalLossMin, unit)} – ${moneyShort(q.totalLossMax, unit)}`, L + 5, 70, LW - 10, 8.4, COLOR.ink);
+    }
+    label(c, `Olgunluk skoru: ${score} / ${MATURITY_MAX} · ${lvl.name}`, L + 5, 81);
+    levelBand(c, L + 5, 87, LW - 10, MATURITY_LEVELS, MATURITY_MAX, score);
 
-      let yPos = 50;
-      doc.setFontSize(9);
+    // Sağ üst: tek bakışta
+    card(c, R, 42, RW, 60);
+    label(c, 'Tek bakışta', R + 5, 49);
+    const facts: [string, string][] = rec ? [
+      [`${rec.def.name}`, `${rec.def.days} adam-gün · bütçe ${moneyShort(rec.budget, unit)}`],
+      [`${fmtNum(rec.paybackExpMonths)} ay`, 'beklenen geri ödeme süresi'],
+      [`${fmtNum(rec.budget > 0 ? rec.year1Gain / rec.budget : 0)}x`, '1. yıl kazanç / yatırım (ROI)'],
+      [`${q!.losses.filter(l => l.hasData).length} / ${q!.losses.length}`, 'kayıp kalemi veriyle hesaplandı'],
+    ] : [['Veri girilmedi', 'Ciro, maliyet yapısı ve kayıp oranları girildiğinde hesaplanır']];
+    let fy = 57;
+    facts.forEach(([b, t], i) => {
+      setText(c, 10, COLOR.ink, true); doc.text(b, R + 5, fy);
+      setText(c, 7.6, COLOR.muted); doc.text(t, R + 5, fy + 4);
+      if (i < facts.length - 1) { doc.setDrawColor(COLOR.line); doc.setLineWidth(0.2); doc.line(R + 5, fy + 6.5, R + RW - 5, fy + 6.5); }
+      fy += 11.2;
+    });
 
-      obsList.forEach((obs, index) => {
-        const rowHeight = obs.photo ? 52 : 38;
+    // Sol alt: genel değerlendirme
+    card(c, L, 106, LW, 84);
+    label(c, 'Genel değerlendirme ve ilerleme yolu', L + 5, 113);
+    para(c, d.aiAnalysis.generalEvaluation, L + 5, 119, LW - 10, 8.6);
 
-        // Page break check
-        if (yPos + rowHeight > 275) {
-          doc.addPage();
-          yPos = 25;
+    // Sağ alt: koyu kart — öncelikli aksiyonlar
+    card(c, R, 106, RW, 84, COLOR.ink);
+    label(c, 'Önerilen ilk 5 öncelikli aksiyon', R + 5, 113, '#AFB7C2');
+    const acts = q
+      ? [...q.losses].filter(l => l.amount > 0).sort((a, b) => b.amount - a.amount).map(l => ACTION_BY_LOSS[l.key]).filter(Boolean).slice(0, 5)
+      : [];
+    let ay = 120;
+    if (!acts.length) para(c, 'Kayıp verisi girildiğinde aksiyonlar otomatik önceliklendirilir.', R + 5, ay, RW - 10, 8, COLOR.white);
+    acts.forEach((a, i) => {
+      setText(c, 8.2, COLOR.white, true);
+      doc.text(`${i + 1}.`, R + 5, ay);
+      const e = para(c, a.act, R + 10, ay, RW - 15, 8.2, COLOR.white, 1.3, true);
+      ay = para(c, a.desc, R + 10, e + 0.2, RW - 15, 7.2, '#C9CFD8', 1.3) + 2.6;
+    });
+  }
+
+  // ---------- 4. FİRMA PROFİLİ ----------
+  static profile(c: Ctx, d: ReportData) {
+    const doc = c.doc;
+    const op = d.operation;
+    const unit = unitOf(d.metrics?.currency || 'TRY');
+    const ciro = d.metrics?.turnover || num(op.turnoverLira);
+    pageHeader(c, 'Firma profili ve üretim altyapısı');
+    const segs: Seg[] = [{ t: `${d.company.companyName || 'Firma'}: ` }];
+    if (ciro) segs.push({ t: `${moneyShort(ciro, unit)} yıllık ciro`, red: true });
+    if (has(op.operatorsCount)) segs.push({ t: `, ${op.operatorsCount} mavi yaka çalışan` });
+    if (has(op.costPropMaterial)) segs.push({ t: `; maliyetin %${op.costPropMaterial}'i malzeme.` });
+    headline(c, segs);
+
+    const v = (x: any, suffix = '') => (has(x) ? `${x}${suffix}` : 'Veri yok');
+    const rows: Cell[][] = [
+      ['Sektörel faaliyet alanı', d.company.sector || '-'],
+      ['Ürün / proses grubu', op.urunGrubu || '-'],
+      ['Çalışan sayısı bandı · vardiya', [op.calisanSayisi, op.vardiya ? `${op.vardiya} vardiya` : ''].filter(Boolean).join(' · ') || '-'],
+      ['Mavi yaka çalışan', v(op.operatorsCount, ' kişi')],
+      ['Yıllık üretim hacmi', has(op.annualVolume) ? `${op.annualVolume} ${op.productionUnit || ''}` : 'Veri yok'],
+      ['Kapalı alan', v(op.coveredArea, ' m²')],
+      ['Yıllık ciro', ciro ? money(ciro, unit) : 'Veri yok'],
+      ['Setup yapılan makine / hat', v(op.setupMachineCount, ' adet')],
+      ['Değerlendiren danışman', d.company.consultant || '-'],
+    ];
+    table(c, [{ h: 'Parametre', w: 70 }, { h: 'Beyan edilen değer', w: 70 }], rows, PAGE.mx, 46);
+
+    const R = PAGE.mx + 150, RW = CW - 150;
+    card(c, R, 42, RW, 148);
+    label(c, 'Maliyet yapısı (cironun %)', R + 5, 49);
+    const costs: [string, any][] = [
+      ['Malzeme', op.costPropMaterial], ['Direkt işçilik', op.costPropLabor], ['Enerji', op.costPropEnergy],
+      ['Bakım', op.costPropMaintenance], ['Genel üretim gideri', op.costPropOverhead], ['Faaliyet kârı', op.costPropProfit],
+    ];
+    const palette = [COLOR.ink, COLOR.red, COLOR.amber, COLOR.good, COLOR.muted, COLOR.green];
+    // Yığılmış çubuk
+    let sx = R + 5;
+    const sw = RW - 10;
+    costs.forEach(([, p], i) => {
+      const w = (num(p) / 100) * sw;
+      if (w > 0) { doc.setFillColor(palette[i]); doc.rect(sx, 54, w, 6, 'F'); sx += w; }
+    });
+    hbars(c, R + 5, 68, RW - 10, costs.map(([n, p], i) => ({
+      label: n, value: num(p), color: palette[i],
+      text: has(p) ? `%${fmtNum(num(p))}${ciro ? ` · ${moneyShort(ciro * num(p) / 100, unit)}` : ''}` : 'Veri yok',
+    })), 9);
+    const total = costs.reduce((s, [, p]) => s + num(p), 0);
+    para(c, `Toplam %${fmtNum(total)}${Math.abs(total - 100) > 0.5 ? ' — toplamın %100 olması önerilir' : ''}. Kayıp hesabında malzeme, işçilik, enerji ve bakım tabanları bu oranlardan türetilir.`, R + 5, 130, RW - 10, 7.6, COLOR.muted);
+  }
+
+  // ---------- 5. OPERASYONEL VERİLER ----------
+  static operations(c: Ctx, d: ReportData) {
+    const op = d.operation;
+    pageHeader(c, 'Operasyonel veriler');
+    type K = { name: string; ref: string; act: string; worse: boolean | null; note: string };
+    const lower = (v: number, ref: number) => (v > 0 ? v > ref : null);
+    const higher = (v: number, ref: number) => (v > 0 ? v < ref : null);
+    const kpis: K[] = [
+      { name: 'Toplam ekipman etkinliği (OEE)', ref: '%85 (dünya standardı)', act: has(op.oee) ? `%${tr(op.oee)}` : 'Ölçülmüyor', worse: higher(num(op.oee), 85), note: 'Kullanılabilirlik × performans × kalite' },
+      { name: 'Hat / proses verimliliği', ref: has(op.plannedEfficiency) ? `%${op.plannedEfficiency} (plan)` : '-', act: has(op.actualEfficiency) ? `%${tr(op.actualEfficiency)}` : 'Veri yok', worse: has(op.plannedEfficiency) ? higher(num(op.actualEfficiency), num(op.plannedEfficiency)) : null, note: 'Planlanana göre gerçekleşen' },
+      { name: 'Kalitesizlik oranı (COPQ)', ref: '%2,5', act: has(op.copqRate) ? `%${tr(op.copqRate)}` : 'Veri yok', worse: lower(num(op.copqRate), 2.5), note: 'Hurda + tamir' },
+      { name: 'Hurda oranı', ref: '%0,5', act: has(op.scrapRate) ? `%${tr(op.scrapRate)}` : 'Veri yok', worse: lower(num(op.scrapRate), 0.5), note: '' },
+      { name: 'Tamir / rework oranı', ref: '%1,0', act: has(op.reworkRate) ? `%${tr(op.reworkRate)}` : 'Veri yok', worse: lower(num(op.reworkRate), 1), note: '' },
+      { name: 'Fazla mesai oranı', ref: '%3,0', act: has(op.overtimeRate) ? `%${tr(op.overtimeRate)}` : 'Veri yok', worse: lower(num(op.overtimeRate), 3), note: '' },
+      { name: 'Teslim süresi (lead time)', ref: '7 gün', act: has(op.leadTime) ? `${tr(op.leadTime)} gün` : 'Veri yok', worse: lower(num(op.leadTime), 7), note: 'Siparişten sevkiyata' },
+      { name: 'Setup sıklığı', ref: '1–2 / vardiya', act: has(op.setupFrequency) ? `${tr(op.setupFrequency)} / hafta` : 'Veri yok', worse: null, note: '' },
+      { name: 'Ortalama setup süresi', ref: '15 dakika', act: has(op.setupDuration) ? `${tr(op.setupDuration)} dakika` : 'Veri yok', worse: lower(num(op.setupDuration), 15), note: '' },
+      { name: 'Aylık operatör maliyeti (yüklü)', ref: '-', act: has(op.grossLaborCost) ? `${op.grossLaborCost} ${unitOf(d.metrics?.currency || 'TRY')}` : 'Veri yok', worse: null, note: '' },
+    ];
+    const behind = kpis.filter(k => k.worse === true).length;
+    const measured = kpis.filter(k => k.worse !== null).length;
+    headline(c, [
+      { t: 'Operasyonel göstergeler: ölçülen ' }, { t: `${measured} göstergenin ${behind} tanesi referansın gerisinde`, red: behind > 0 }, { t: '.' },
+    ]);
+    const rows: Cell[][] = kpis.map(k => [
+      { t: k.name, bold: true }, k.ref, { t: k.act, bold: true },
+      k.worse === null ? { t: k.act.startsWith('Veri') || k.act === 'Ölçülmüyor' ? 'Veri yok' : 'Bilgi', pill: COLOR.muted }
+        : k.worse ? { t: 'Referansın gerisinde', pill: COLOR.bad } : { t: 'Referans içinde', pill: COLOR.green },
+      { t: k.note, color: COLOR.muted },
+    ]);
+    const end = table(c, [{ h: 'Gösterge', w: 72 }, { h: 'Referans / hedef', w: 45 }, { h: 'Gerçekleşen', w: 35 }, { h: 'Durum', w: 45 }, { h: 'Not', w: CW - 197 }], rows, PAGE.mx, 46).y;
+
+    const parts: string[] = [];
+    if (has(op.oee)) parts.push(`%${tr(op.oee)} OEE`);
+    if (has(op.copqRate)) parts.push(`%${tr(op.copqRate)} kalitesizlik oranı`);
+    const text = (parts.length
+      ? `Mevcut ${parts.join(' ve ')} değerleri, operasyonel kayıpların finansal etkisinin yüksek olduğunu göstermektedir. `
+      : 'Operasyonel veriler kısmen ölçülebildiğinden değerlendirme saha gözlemlerine dayanmaktadır. ')
+      + (has(op.setupDuration) ? `Setup sürelerinin ${op.setupDuration} dakika seviyesinde olması planlama esnekliğini sınırlamaktadır.` : '');
+    const y = Math.min(end + 6, 168);
+    card(c, PAGE.mx, y, CW, 22);
+    label(c, 'Kritik KPI eşikleri ve darboğaz değerlendirmesi', PAGE.mx + 5, y + 7);
+    para(c, text, PAGE.mx + 5, y + 13, CW - 10, 8.2);
+  }
+
+  // ---------- 6. YALIN OLGUNLUK ----------
+  static lean(c: Ctx, d: ReportData) {
+    const doc = c.doc;
+    pageHeader(c, 'Yalın olgunluk değerlendirmesi');
+    const scores = d.operation.scores || {};
+    const groups = CRITERIA.map(g => {
+      const vals = g.items.map(it => Number(scores[it.no]));
+      const scored = vals.filter(v => v >= 0);
+      const sum = scored.reduce((s, v) => s + v, 0);
+      return { name: g.group, avg: scored.length ? sum / scored.length : 0, sum, max: g.items.length * 3, unscored: vals.length - scored.length, n: g.items.length };
+    });
+    const total = d.metrics?.maturityScore ?? groups.reduce((s, g) => s + g.sum, 0);
+    const lvl = levelOf(total);
+    const ranked = [...groups].sort((a, b) => b.avg - a.avg);
+    headline(c, [
+      { t: `Olgunluk skoru ${total} / ${MATURITY_MAX} (${lvl.name}). En güçlü grup ${ranked[0].name}, ` },
+      { t: `en zayıf grup ${ranked[ranked.length - 1].name}`, red: true }, { t: '.' },
+    ]);
+
+    card(c, PAGE.mx, 42, 128, 148);
+    label(c, 'Grup ortalamaları (0–3)', PAGE.mx + 5, 49);
+    radar(c, PAGE.mx + 64, 116, 37, groups.map(g => g.name), groups.map(g => g.avg), 3, 2);
+    setText(c, 6.6, COLOR.muted);
+    doc.setFillColor(COLOR.red); doc.rect(PAGE.mx + 8, 183, 3, 2, 'F');
+    doc.text('Gerçekleşen', PAGE.mx + 12.5, 184.8);
+    doc.setDrawColor(COLOR.ink); doc.setLineDashPattern([1, 0.8], 0); doc.line(PAGE.mx + 34, 184, PAGE.mx + 39, 184); doc.setLineDashPattern([], 0);
+    doc.text('Referans: 2 = faaliyet var', PAGE.mx + 40.5, 184.8);
+
+    const R = PAGE.mx + 134, RW = CW - 134;
+    label(c, `Seviye: ${lvl.name} · ${d.metrics?.answeredCount ?? '-'} / 17 kriter değerlendirildi`, R, 47);
+    levelBand(c, R, 54, RW, MATURITY_LEVELS, MATURITY_MAX, total);
+    const status = (a: number) => (a >= 2.5 ? ['Güçlü', COLOR.green] : a >= 1.5 ? ['Faaliyet var', COLOR.good] : a >= 0.75 ? ['Zayıf', COLOR.amber] : ['Kritik', COLOR.bad]);
+    const rows: Cell[][] = groups.map(g => {
+      const [t, col] = status(g.avg);
+      return [{ t: g.name, bold: true }, fmtNum(g.avg, 2), `${g.sum} / ${g.max}`, { t, pill: col }, g.unscored ? `${g.unscored} kriter puanlanmadı` : ''];
+    });
+    rows.push(['Genel', fmtNum(total / 17, 2), `${total} / ${MATURITY_MAX}`, { t: lvl.name, pill: lvl.color }, '']);
+    table(c, [{ h: 'Grup', w: 44 }, { h: 'Ortalama', w: 17, align: 'right' }, { h: 'Puan', w: 15, align: 'right' }, { h: 'Durum', w: 24 }, { h: 'Not', w: RW - 100 }], rows, R, 72, { boldLast: true });
+    para(c, 'Puanlama: 0 izlenmedi · 1 zayıf · 2 faaliyet var · 3 geliştirilebilir. Seviyeler toplam puana göredir: 0–12 Başlangıç, 13–25 Gelişen, 26–40 Yapılanmış, 41–51 İleri.', R, 168, RW, 7, COLOR.muted);
+  }
+
+  // ---------- 7. SAHA BULGULARI (gerekirse devam sayfası) ----------
+  static observations(c: Ctx, d: ReportData, newPage: () => void) {
+    const doc = c.doc;
+    const obs = d.observations || [];
+    const findings = d.metrics?.findings || [];
+    const crit = obs.filter(o => o.priority === 'Kritik' || o.priority === 'Yüksek').length;
+    const head = () => {
+      pageHeader(c, 'Saha bulguları');
+      headline(c, obs.length
+        ? [{ t: `Saha turunda ${obs.length} bulgu kayıt altına alındı; ` }, { t: `${crit} tanesi kritik / yüksek öncelikli`, red: crit > 0 }, { t: '.' }]
+        : [{ t: 'Olgunluk değerlendirmesinde en zayıf kriterler ve finansal etkileri.' }]);
+    };
+    head();
+    type Item = { title: string; prio: string; a: [string, string]; b: [string, string]; photo?: string };
+    const items: Item[] = obs.length
+      ? obs.map(o => ({ title: o.category, prio: o.priority || 'Orta', a: ['Tespit', o.finding || '-'], b: ['Önerilen iyileştirme', o.improvement || '-'], photo: o.photo }))
+      : findings.map(f => ({ title: f.title, prio: f.score <= 0 ? 'Kritik' : f.score === 1 ? 'Yüksek' : 'Orta', a: ['Gözlem', f.obs], b: ['Finansal etki · yalın araç', `${f.finImpact} Araç: ${f.leanTool}`] }));
+    if (!items.length) {
+      card(c, PAGE.mx, 44, CW, 24);
+      para(c, 'Henüz girilmiş bir saha gözlemi bulunmamaktadır.', PAGE.mx + 5, 57, CW - 10, 9, COLOR.muted);
+      return;
+    }
+    const colW = (CW - 5) / 2, cardH = 47;
+    let i = 0;
+    while (i < items.length) {
+      for (let slot = 0; slot < 6 && i < items.length; slot++, i++) {
+        const it = items[i];
+        const x = PAGE.mx + (slot % 2) * (colW + 5), y = 42 + Math.floor(slot / 2) * (cardH + 3);
+        card(c, x, y, colW, cardH);
+        doc.setFillColor(PRIORITY_COLOR[it.prio] || COLOR.muted);
+        doc.rect(x, y + 3, 1.2, cardH - 6, 'F');
+        setText(c, 9, COLOR.ink, true);
+        doc.text((doc.splitTextToSize(`${i + 1}. ${it.title}`, colW - 40) as string[])[0], x + 5, y + 7);
+        pill(c, it.prio, x + colW - 22, y + 7, PRIORITY_COLOR[it.prio] || COLOR.muted);
+        let tx = x + 5, tw = colW - 10;
+        if (it.photo) {
+          try { doc.addImage(it.photo, 'JPEG', x + colW - 37, y + 11, 32, 32); tw = colW - 46; } catch { /* görsel okunamadı */ }
         }
-
-        // Draw card background
-        doc.setFillColor('#FFFFFF');
-        doc.setDrawColor('#E2E8F0');
-        doc.setLineWidth(0.4);
-        doc.rect(15, yPos, 180, rowHeight, 'FD');
-
-        // Colored vertical edge band based on priority
-        let edgeColor = this.themeSecondary;
-        if (obs.priority === 'Kritik') edgeColor = this.themeDanger;
-        else if (obs.priority === 'Yüksek') edgeColor = '#F59E0B';
-        else if (obs.priority === 'Orta') edgeColor = '#4F46E5';
-
-        doc.setFillColor(edgeColor);
-        doc.rect(15, yPos, 3, rowHeight, 'F');
-
-        // Draw fields inside card
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(9.5);
-        doc.setTextColor(this.themePrimary);
-        doc.text(`${index + 1}. BULGU: ${obs.category.toUpperCase()}`, 22, yPos + 7);
-
-        // Priority Badge
-        doc.setFillColor(edgeColor);
-        doc.rect(142, yPos + 3, 45, 5, 'F');
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(7.5);
-        doc.setTextColor('#FFFFFF');
-        doc.text(`ÖNCELİK: ${obs.priority.toUpperCase()}`, 144, yPos + 6.5);
-
-        // Divider
-        doc.setDrawColor('#F1F5F9');
-        doc.line(22, yPos + 10, 185, yPos + 10);
-
-        // Details
-        let textXLimit = 180;
-        let detailsX = 22;
-
-        if (obs.photo) {
-          try {
-            // Render the photo on the right of the text
-            doc.addImage(obs.photo, 'JPEG', 22, yPos + 13, 30, 30);
-            detailsX = 57;
-            textXLimit = 135;
-          } catch (imgError) {
-            console.warn('Could not render observation image:', imgError);
-          }
-        }
-
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(8.5);
-        doc.setTextColor(this.themePrimary);
-        doc.text('Tespit Edilen Problem (Finding):', detailsX, yPos + 16);
-        
-        doc.setFont(fontName, 'normal');
-        doc.setTextColor('#475569');
-        const splitFinding = doc.splitTextToSize(obs.finding || '', textXLimit - detailsX);
-        doc.text(splitFinding, detailsX, yPos + 20);
-
-        const findingHeight = splitFinding.length * 4;
-
-        doc.setFont(fontName, 'bold');
-        doc.setTextColor(this.themeAccent);
-        doc.text('Önerilen İyileştirme (Improvement):', detailsX, yPos + 22 + findingHeight);
-        
-        doc.setFont(fontName, 'normal');
-        doc.setTextColor('#334155');
-        const splitImprovement = doc.splitTextToSize(obs.improvement || '', textXLimit - detailsX);
-        doc.text(splitImprovement, detailsX, yPos + 26 + findingHeight);
-
-        yPos += rowHeight + 6;
-      });
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Saha Bulgulari', e, 50, fontName);
+        label(c, it.a[0], tx, y + 13);
+        const e = para(c, clip(c, it.a[1], tw, 3), tx, y + 17, tw, 7.6);
+        label(c, it.b[0], tx, e + 2.5, COLOR.good);
+        para(c, clip(c, it.b[1], tw, 3), tx, e + 6.5, tw, 7.6);
+      }
+      if (i < items.length) { newPage(); head(); }
     }
   }
 
-  /**
-   * 8. FINANCIAL SAVINGS AND ROI
-   */
-  public static drawPotentialSavings(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '6. POTANSİYEL KAZANIMLAR VE ROI SİMÜLASYONU', 'Hesaplanan yıllık bütçe geri kazanımları ve yatırım analizi', 25, fontName);
-
-      const savingsList = data.savings || [];
-
-      if (savingsList.length === 0) {
-        doc.setFillColor('#F8FAFC');
-        doc.setDrawColor('#E2E8F0');
-        doc.rect(15, 50, 180, 25, 'FD');
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(9.5);
-        doc.setTextColor(this.themeSecondary);
-        doc.text('Henüz hesaplanmış potansiyel finansal kazanım bulunmamaktadır.', 22, 65);
-        return;
-      }
-
-      // Render savings table
-      const cols: TableColumn[] = [
-        { header: 'Kazanım / İyileştirme Türü', width: 60 },
-        { header: 'Mevcut Maliyet (₺)', width: 30, align: 'right' },
-        { header: 'Gelecek Maliyet (₺)', width: 30, align: 'right' },
-        { header: 'Yıllık Tasarruf (₺)', width: 32, align: 'right' },
-        { header: 'ROI (x)', width: 13, align: 'center' },
-        { header: 'Geri Ödeme (Ay)', width: 15, align: 'center' }
-      ];
-
-      const rows = savingsList.map(s => [
-        s.savingType || 'Lean İyileştirme',
-        Math.round(s.currentCost).toLocaleString('tr-TR'),
-        Math.round(s.futureCost).toLocaleString('tr-TR'),
-        Math.round(s.annualSaving).toLocaleString('tr-TR'),
-        s.roi ? `${s.roi}x` : '-',
-        s.payback ? String(s.payback) : '-'
-      ]);
-
-      // Calculate totals
-      const totalCurrent = savingsList.reduce((sum, s) => sum + (s.currentCost || 0), 0);
-      const totalFuture = savingsList.reduce((sum, s) => sum + (s.futureCost || 0), 0);
-      const totalSavingVal = savingsList.reduce((sum, s) => sum + (s.annualSaving || 0), 0);
-      // Satırlar aynı paketin kategorileridir: ROI ve geri ödeme paket geneli için ortaktır
-      const avgRoi = savingsList.length > 0 ? String(savingsList[0].roi || 0) : '0';
-      const packagePayback = savingsList.length > 0 ? String(savingsList[0].payback || '-') : '-';
-
-      rows.push([
-        'TOPLAM FİNANSAL GERİ KAZANIM',
-        Math.round(totalCurrent).toLocaleString('tr-TR'),
-        Math.round(totalFuture).toLocaleString('tr-TR'),
-        Math.round(totalSavingVal).toLocaleString('tr-TR'),
-        `${avgRoi}x`,
-        packagePayback
-      ]);
-
-      let currentY = TableRenderer.drawTable(doc, cols, rows, 15, 50, () => {}, this.themePrimary, '#111827', '#F8FAFC');
-
-      // Add COPQ Breakdown Pie Chart below the table
-      currentY += 8;
-      
-      if (currentY + 80 > 275) {
-        doc.addPage();
-        currentY = 25;
-      }
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10.5);
-      doc.setTextColor(this.themePrimary);
-      doc.text('KALİTESİZLİK MALİYETİ (COPQ) KAYIP PAYLAŞIMI', 15, currentY);
-
-      // Programmatic values for the pie chart
-      const chartLabels = ['Duruş & Setup', 'Kalite Defekt', 'Fazla Mesai', 'Hurda Fire', 'İşçilik', 'Kapasite'];
-      const chartValues = [
-        Math.round(totalSavingVal * 0.25) || 1200000,
-        Math.round(totalSavingVal * 0.20) || 1000000,
-        Math.round(totalSavingVal * 0.15) || 750000,
-        Math.round(totalSavingVal * 0.15) || 750000,
-        Math.round(totalSavingVal * 0.15) || 750000,
-        Math.round(totalSavingVal * 0.10) || 500000
-      ];
-
-      const pieBase64 = ChartRenderer.renderPieChart(chartLabels, chartValues, 'Toplam COPQ Dağılım Kırılımı (% / ₺)');
-      
-      if (pieBase64) {
-        doc.addImage(pieBase64, 'PNG', 15, currentY + 3, 180, 80);
-      } else {
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(this.themeSecondary);
-        doc.text('Kayıp dağılım grafiği oluşturulamadı.', 20, currentY + 15);
-      }
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Potansiyel Kazanimlar', e, 50, fontName);
+  // ---------- 8. POTANSİYEL KAZANIMLAR ----------
+  static savings(c: Ctx, d: ReportData) {
+    const m = d.metrics;
+    const unit = unitOf(m?.currency || 'TRY');
+    pageHeader(c, 'Potansiyel kazanımlar');
+    const q = m?.qla;
+    if (!q || q.totalLoss <= 0) {
+      headline(c, [{ t: 'Potansiyel kazanım hesabı için kayıp verisi girilmedi.' }]);
+      return;
     }
+    const rec = q.recommended;
+    const losses = [...q.losses].filter(l => l.amount > 0).sort((a, b) => b.amount - a.amount);
+    const top = losses[0];
+    headline(c, [
+      { t: `En büyük kayıp kalemi ${top.label.toLocaleLowerCase('tr-TR')} (${moneyShort(top.amount, unit)}). ` },
+      { t: `${rec.def.name} ile yıllık ${moneyShort(rec.gainMin, unit)} – ${moneyShort(rec.gainMax, unit)} tasarruf`, red: true }, { t: '.' },
+    ]);
+    card(c, PAGE.mx, 42, 118, 148);
+    label(c, 'Kayıp dağılımı (yıllık)', PAGE.mx + 5, 49);
+    const end = hbars(c, PAGE.mx + 5, 55, 108, losses.map(l => ({ label: l.label, value: l.amount, text: moneyShort(l.amount, unit) })), 8.4);
+    setText(c, 8.4, COLOR.ink, true);
+    c.doc.text('Toplam', PAGE.mx + 5, end + 5);
+    c.doc.text(moneyShort(q.totalLoss, unit), PAGE.mx + 113, end + 5, { align: 'right' });
+    const missing = q.losses.filter(l => !l.hasData).map(l => l.label);
+    if (missing.length) para(c, `Veri girilmediği için hesaba katılmayan: ${missing.join(', ')}.`, PAGE.mx + 5, end + 12, 108, 7, COLOR.muted);
+
+    const R = PAGE.mx + 124, RW = CW - 124;
+    label(c, `Geri kazanım matrisi — ${rec.def.name} (${rec.def.days} adam-gün)`, R, 47);
+    const opps = [...q.opportunities].filter(o => o.loss > 0).sort((a, b) => b.gainMax - a.gainMax);
+    const rows: Cell[][] = opps.map(o => [{ t: o.label, bold: true }, o.tool, moneyShort(o.loss, unit), `${moneyShort(o.gainMin, unit)} – ${moneyShort(o.gainMax, unit)}`, `%${o.pctMin}–${o.pctMax}`]);
+    rows.push(['Toplam', '', moneyShort(q.totalLoss, unit), `${moneyShort(rec.gainMin, unit)} – ${moneyShort(rec.gainMax, unit)}`, `%${Math.round(rec.def.recovery[0] * 100)}–${Math.round(rec.def.recovery[1] * 100)}`]);
+    const t = table(c, [{ h: 'Kalem', w: 33 }, { h: 'Yalın araç', w: 37 }, { h: 'Mevcut kayıp', w: 25, align: 'right' }, { h: 'Yıllık tasarruf', w: 33, align: 'right' }, { h: 'Pay', w: RW - 128, align: 'right' }], rows, R, 53, { boldLast: true, size: 7.3 });
+    const y = Math.min(t.y + 6, 166);
+    const kpi = (x: number, w: number, lab: string, val: string) => { card(c, x, y, w, 22); label(c, lab, x + 4, y + 7); setText(c, 13, COLOR.ink, true); c.doc.text(val, x + 4, y + 16); };
+    const kw = (RW - 8) / 3;
+    kpi(R, kw, 'Proje bütçesi', moneyShort(rec.budget, unit));
+    kpi(R + kw + 4, kw, 'Geri ödeme', `${fmtNum(rec.paybackExpMonths)} ay`);
+    kpi(R + 2 * (kw + 4), kw, `${q.sustainYears} yıllık kazanç`, moneyShort(rec.cumulativeGain, unit));
   }
 
-  /**
-   * 9. AI ANALYSIS (STRATEGIC ROADMAP)
-   */
-  public static drawAiAnalysis(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '7. YAPAY ZEKA (AI PARTNER) STRATEJİK DEĞERLENDİRMESİ', 'Gemba Partner AI tarafından oluşturulan derinlemesine gelişim rehberi', 25, fontName);
-
-      const ai = data.aiAnalysis;
-
-      let yPos = 50;
-
-      // 1. General Evaluation
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(this.themePrimary);
-      doc.text('A. GENEL DEĞERLENDİRME VE SEKTÖREL BAKIŞ', 15, yPos);
-      yPos += 5;
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor('#334155');
-      const splitEval = doc.splitTextToSize(ai.generalEvaluation, 180);
-      doc.text(splitEval, 15, yPos);
-      yPos += splitEval.length * 4.2 + 8;
-
-      // 2. Risks and Opportunities (2 Column side-by-side)
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(this.themePrimary);
-      doc.text('B. KRİTİK OPERASYONEL RİSKLER VE GELECEK FIRSATLARI', 15, yPos);
-      yPos += 5;
-
-      // Left Column - Risks
-      doc.setFillColor('#FEF2F2');
-      doc.setDrawColor('#FEE2E2');
-      doc.rect(15, yPos, 88, 55, 'FD');
-      
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(this.themeDanger);
-      doc.text('KRİTİK RİSK VE TEHDİTLER', 20, yPos + 6);
-      
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor('#7F1D1D');
-      let rY = yPos + 12;
-      ai.criticalRisks.slice(0, 4).forEach(risk => {
-        const splitR = doc.splitTextToSize(`• ${risk}`, 78);
-        doc.text(splitR, 20, rY);
-        rY += splitR.length * 3.8;
+  // ---------- 9. STRATEJİK DEĞERLENDİRME ----------
+  static strategy(c: Ctx, d: ReportData) {
+    const ai = d.aiAnalysis;
+    pageHeader(c, 'Stratejik değerlendirme');
+    headline(c, [{ t: `Stratejik değerlendirme: ${ai.criticalRisks.length} kritik kayıp alanı, ` }, { t: `${ai.opportunities.length} yalın fırsat`, red: true }, { t: ' ve üç aşamalı yol haritası.' }]);
+    card(c, PAGE.mx, 42, CW, 26);
+    label(c, 'Genel değerlendirme', PAGE.mx + 5, 49);
+    para(c, clip(c, ai.generalEvaluation, CW - 10, 3), PAGE.mx + 5, 55, CW - 10, 8.2);
+    const half = (CW - 5) / 2;
+    const list = (x: number, title: string, items: string[], col: string) => {
+      card(c, x, 72, half, 50);
+      label(c, title, x + 5, 79, col);
+      let y = 85;
+      (items.length ? items : ['Veri yok']).slice(0, 4).forEach(t => { y = para(c, `• ${t}`, x + 5, y, half - 10, 7.8) + 1.6; });
+    };
+    list(PAGE.mx, 'Kritik kayıp alanları', ai.criticalRisks, COLOR.bad);
+    list(PAGE.mx + half + 5, 'Stratejik yalın fırsatlar', ai.opportunities, COLOR.good);
+    const third = (CW - 10) / 3;
+    const terms: [string, string[]][] = [['Hızlı kazanımlar · 0–3 ay', ai.quickWins], ['Orta vade · 3–9 ay', ai.mediumTermProjects], ['Sürdürülebilirlik · 9+ ay', ai.longTermProjects]];
+    terms.forEach(([title, items], i) => {
+      const x = PAGE.mx + i * (third + 5);
+      card(c, x, 126, third, 64, i === 0 ? COLOR.ink : COLOR.soft);
+      label(c, title, x + 5, 133, i === 0 ? '#AFB7C2' : COLOR.muted);
+      let y = 139;
+      (items.length ? items : ['Veri yok']).slice(0, 3).forEach((t, k) => {
+        y = para(c, `${k + 1}. ${t}`, x + 5, y, third - 10, 7.4, i === 0 ? COLOR.white : COLOR.ink) + 1.6;
       });
-
-      // Right Column - Opportunities
-      doc.setFillColor('#ECFDF5');
-      doc.setDrawColor('#D1FAE5');
-      doc.rect(107, yPos, 88, 55, 'FD');
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(this.themeAccent);
-      doc.text('STRATEJİK YALIN FIRSATLAR', 112, yPos + 6);
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor('#065F46');
-      let oY = yPos + 12;
-      ai.opportunities.slice(0, 4).forEach(opp => {
-        const splitO = doc.splitTextToSize(`• ${opp}`, 78);
-        doc.text(splitO, 112, oY);
-        oY += splitO.length * 3.8;
-      });
-
-      yPos += 63;
-
-      // 3. Roadmap Projects (Short, Medium, Long term)
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(this.themePrimary);
-      doc.text('C. KRONOLOJİK YALIN DÖNÜŞÜM YOL HARİTASI (ROADMAP)', 15, yPos);
-      yPos += 5;
-
-      const terms = [
-        { label: 'HIZLI KAZANIMLAR (0-3 Ay) / Quick-Wins', list: ai.quickWins, bg: '#F8FAFC', border: '#E2E8F0', text: this.themePrimary },
-        { label: 'ORTA VADELİ PROJELER (3-9 Ay) / Core Kaizen', list: ai.mediumTermProjects, bg: '#F1F5F9', border: '#CBD5E1', text: this.themeSecondary },
-        { label: 'UZUN VADELİ SÜRDÜRÜLEBİLİRLİK (9+ Ay) / TPM', list: ai.longTermProjects, bg: '#E2E8F0', border: '#94A3B8', text: '#1E293B' }
-      ];
-
-      terms.forEach(term => {
-        doc.setFillColor(term.bg);
-        doc.setDrawColor(term.border);
-        doc.rect(15, yPos, 180, 22, 'FD');
-
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(term.text);
-        doc.text(term.label, 18, yPos + 5);
-
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor('#334155');
-        
-        let bulletText = '';
-        term.list.slice(0, 3).forEach((item, idx) => {
-          bulletText += `${idx + 1}. ${item}   `;
-        });
-        
-        const splitBullet = doc.splitTextToSize(bulletText, 172);
-        doc.text(splitBullet, 18, yPos + 11);
-
-        yPos += 26;
-      });
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'AI Analizi', e, 50, fontName);
-    }
+    });
   }
 
-  /**
-   * 10. ACTION PLAN
-   */
-  public static drawActionPlan(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '8. ÖNCELİKLENDİRİLMİŞ YALIN AKSİYON PLANI', 'Uygulanacak iyileştirme adımları ve sorumluluk tablosu', 25, fontName);
-
-      const obsList = data.observations || [];
-
-      // Auto-generate the Action Plan Rows from physical observations list
-      const cols: TableColumn[] = [
-        { header: 'Yapılacak Yalın İş / İyileştirme', width: 75 },
-        { header: 'Sorumlu', width: 35, align: 'center' },
-        { header: 'Termin', width: 25, align: 'center' },
-        { header: 'Öncelik', width: 25, align: 'center' },
-        { header: 'Durum', width: 20, align: 'center' }
-      ];
-
-      const getSorumlu = (cat: string) => {
-        const c = cat.toLowerCase();
-        if (c.includes('smed') || c.includes('kurulum')) return 'Üretim ve Metot Mühendisi';
-        if (c.includes('5s') || c.includes('görsel')) return '5S Pilot Alan Sorumlusu';
-        if (c.includes('bakım') || c.includes('tpm')) return 'Bakım ve TPM Departmanı';
-        if (c.includes('kalite') || c.includes('hata') || c.includes('poka')) return 'Kalite Güvence Müdürü';
-        if (c.includes('lojistik') || c.includes('malzeme')) return 'Lojistik ve Planlama Sorumlusu';
-        return 'Saha Operasyon Ekibi';
-      };
-
-      const getTermin = (p: string) => {
-        if (p === 'Kritik') return '15 Gün';
-        if (p === 'Yüksek') return '30 Gün';
-        if (p === 'Orta') return '60 Gün';
-        return '90 Gün';
-      };
-
-      let rows = obsList.map(obs => [
-        obs.improvement || obs.finding || 'İyileştirme Aksiyonu',
-        getSorumlu(obs.category),
-        getTermin(obs.priority),
-        obs.priority || 'Orta',
-        'Planlandı'
-      ]);
-
-      // Fallback row if empty
-      if (rows.length === 0) {
-        rows = [
-          ['5S ve Görsel Yönetim Gölge Pano Uygulaması', '5S Alan Sorumlusu', '30 Gün', 'Yüksek', 'Planlandı'],
-          ['SMED Hızlı Kalıp Değişim Ön Isıtma Entegrasyonu', 'Üretim Mühendisi', '45 Gün', 'Yüksek', 'Beklemede'],
-          ['Günlük Otonom Bakım Temizlik Listeleri', 'Bakım Teknikeri', '30 Gün', 'Orta', 'Planlandı']
-        ];
-      }
-
-      TableRenderer.drawTable(doc, cols, rows, 15, 50, () => {}, this.themePrimary, '#1E293B', '#F8FAFC');
-
-      // Notes block
-      const noteY = 165;
-      doc.setFillColor('#F1F5F9');
-      doc.setDrawColor('#E2E8F0');
-      doc.rect(15, noteY, 180, 20, 'FD');
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(8.5);
-      doc.setTextColor(this.themePrimary);
-      doc.text('AKSİYON PLANI YÖNETİM METODU:', 20, noteY + 6);
-      
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(this.themeSecondary);
-      doc.text('Tüm aksiyonlar PDCA (Plan-Do-Check-Act) döngüsü çerçevesinde haftalık gözden geçirmelerde denetlenmelidir.', 20, noteY + 11);
-      doc.text('Öncelik değeri "Kritik" ve "Yüksek" olan işler gecikme durumunda doğrudan üst yönetime raporlanır.', 20, noteY + 15);
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Aksiyon Plani', e, 50, fontName);
+  // ---------- 10. AKSİYON PLANI ----------
+  static actionPlan(c: Ctx, d: ReportData, newPage: () => void) {
+    pageHeader(c, 'Aksiyon planı');
+    const obs = d.observations || [];
+    const owner = (cat: string) => {
+      const x = (cat || '').toLocaleLowerCase('tr-TR');
+      if (x.includes('smed') || x.includes('kurulum') || x.includes('setup')) return 'Üretim ve metot mühendisi';
+      if (x.includes('5s') || x.includes('görsel')) return '5S pilot alan sorumlusu';
+      if (x.includes('bakım') || x.includes('tpm') || x.includes('arıza')) return 'Bakım / TPM';
+      if (x.includes('kalite') || x.includes('hata') || x.includes('poka') || x.includes('hurda') || x.includes('rework')) return 'Kalite güvence';
+      if (x.includes('lojistik') || x.includes('malzeme') || x.includes('stok')) return 'Lojistik ve planlama';
+      return 'Saha operasyon ekibi';
+    };
+    const due = (p: string) => (p === 'Kritik' ? '15 gün' : p === 'Yüksek' ? '30 gün' : p === 'Orta' ? '60 gün' : '90 gün');
+    let src: { act: string; cat: string; prio: string }[] = obs.map(o => ({ act: o.improvement || o.finding || 'İyileştirme aksiyonu', cat: o.category, prio: o.priority || 'Orta' }));
+    if (!src.length && d.metrics) {
+      const losses = [...d.metrics.qla.losses].filter(l => l.amount > 0).sort((a, b) => b.amount - a.amount);
+      src = losses.map((l, i) => ({ act: `${ACTION_BY_LOSS[l.key]?.act ?? l.label}: ${ACTION_BY_LOSS[l.key]?.desc ?? ''}`, cat: l.label, prio: i < 2 ? 'Yüksek' : i < 4 ? 'Orta' : 'Düşük' }));
     }
+    const urgent = src.filter(s => s.prio === 'Kritik' || s.prio === 'Yüksek').length;
+    headline(c, [{ t: `${src.length} aksiyon önceliklendirildi; ` }, { t: `${urgent} tanesi ilk 30 günde başlamalı`, red: urgent > 0 }, { t: '.' }]);
+    let rows: Cell[][] = src.map((s, i) => [String(i + 1), { t: s.act, bold: true }, owner(s.cat), due(s.prio), { t: s.prio, pill: PRIORITY_COLOR[s.prio] || COLOR.muted }, 'Planlandı']);
+    const cols = [{ h: '#', w: 8 }, { h: 'Yapılacak iş / iyileştirme', w: 128 }, { h: 'Sorumlu', w: 50 }, { h: 'Termin', w: 22 }, { h: 'Öncelik', w: 25 }, { h: 'Durum', w: CW - 233 }];
+    let r = table(c, cols, rows, PAGE.mx, 46, { maxY: 166 });
+    while (r.rest.length) { newPage(); pageHeader(c, 'Aksiyon planı (devam)'); r = table(c, cols, r.rest, PAGE.mx, 30, { maxY: 166 }); }
+    const y = Math.max(r.y + 6, 168);
+    card(c, PAGE.mx, Math.min(y, 170), CW, 18);
+    label(c, 'Aksiyon planı yönetim metodu', PAGE.mx + 5, Math.min(y, 170) + 7);
+    para(c, 'Tüm aksiyonlar PDCA döngüsü ile haftalık gözden geçirmelerde takip edilir. Kritik ve yüksek öncelikli işler gecikme durumunda doğrudan üst yönetime raporlanır.', PAGE.mx + 5, Math.min(y, 170) + 12.5, CW - 10, 7.8);
   }
 
-  /**
-   * 11. CONCLUSION & SIGN-OFF
-   */
-  public static drawConclusion(doc: jsPDF, data: ReportData, fontName: string = 'Roboto') {
-    try {
-      this.drawSectionHeader(doc, '9. SONUÇ VE YATIRIM DÖNÜŞ DEĞERLENDİRMESİ', 'Rapor nihai değerlendirmesi ve onay imzaları', 25, fontName);
+  // ---------- 11. SONUÇ ----------
+  static conclusion(c: Ctx, d: ReportData) {
+    const doc = c.doc;
+    const m = d.metrics;
+    const unit = unitOf(m?.currency || 'TRY');
+    const q = m?.qla && m.qla.totalLoss > 0 ? m.qla : undefined, rec = q?.recommended;
+    pageHeader(c, 'Sonuç ve yatırım dönüşü');
+    if (rec && rec.gainMid > 0) {
+      headline(c, [{ t: 'Sonuç: yatırım ' }, { t: `${fmtNum(rec.paybackExpMonths)} ayda geri dönüyor`, red: true }, { t: `; ${q!.sustainYears} yılda ${moneyShort(rec.cumulativeGain, unit)} kazanç.` }]);
+    } else headline(c, [{ t: 'Sonuç ve yatırım dönüşü değerlendirmesi.' }]);
+    card(c, PAGE.mx, 42, 120, 92, COLOR.ink);
+    label(c, 'Nihai kazanım analizi', PAGE.mx + 6, 50, '#AFB7C2');
+    const rowsK: [string, string][] = q && rec ? [
+      ['Toplam yıllık kayıp', moneyShort(q.totalLoss, unit)],
+      [`Beklenen yıllık kazanç`, moneyShort(rec.gainMid, unit)],
+      ['Proje bütçesi', moneyShort(rec.budget, unit)],
+      [`${q.sustainYears} yıllık kümülatif kazanç`, moneyShort(rec.cumulativeGain, unit)],
+    ] : [['Kayıp hesabı', 'Veri girilmedi']];
+    let y = 62;
+    rowsK.forEach(([l, v], i) => {
+      setText(c, 8, '#C9CFD8'); doc.text(l, PAGE.mx + 6, y);
+      setText(c, 16, i === 0 ? '#F28B8E' : COLOR.white, true); doc.text(v, PAGE.mx + 6, y + 7.5);
+      y += 17.5;
+    });
+    if (rec) { setText(c, 7.4, '#C9CFD8'); doc.text(`${rec.def.name} · ${rec.def.days} adam-gün`, PAGE.mx + 6, 129); }
 
-      const turnoverText = data.operation.turnoverLira || '150.000.000';
-      const turnoverVal = Number(turnoverText.replace(/\./g, '')) || 150000000;
-      const copqPool = Math.round(turnoverVal * 0.10);
-      const overallScore = data.assessment.overallScore || 0;
+    const R = PAGE.mx + 126, RW = CW - 126;
+    label(c, 'Baş danışman değerlendirmesi', R, 47);
+    const firma = d.company.companyName || 'Firma';
+    const score = m?.maturityScore ?? 0;
+    const lvlName = levelOf(score).name;
+    const maturityText = score >= 26
+      ? `${score}/${MATURITY_MAX} olgunluk skoru (${lvlName}), operasyonlarda yapılandırılmış iyileştirme için sağlam bir zemin olduğunu göstermektedir.`
+      : `${score}/${MATURITY_MAX} olgunluk skoru (${lvlName}), saha yönetimi ve standartlaşmada geniş bir iyileştirme alanı olduğunu göstermektedir.`;
+    const text = (q
+      ? `Bir günlük Gemba saha turu ve operasyonel veriler ışığında, ${firma} bünyesinde yıllık ${moneyShort(q.totalLoss, unit)} kayıp havuzu ve buna bağlı önemli bir kârlılık potansiyeli tespit edilmiştir. `
+      : `${firma} için saha turu gerçekleştirilmiştir; kayıp hesabı için operasyonel veriler henüz tamamlanmamıştır. `) + maturityText +
+      (rec ? ` Önerilen ${rec.def.name} ile ilk yıl ${moneyShort(rec.year1Gain, unit)} geri kazanım hedeflenmektedir; kazanımlar ürün grubu üretimde kaldıkça sürdürülebilirdir.` : '') +
+      ' İlk adım olarak verilerin firma ile birlikte doğrulanması ve en büyük kayıp kaleminde pilot çalışma başlatılması önerilir.';
+    para(c, text, R, 54, RW, 9, COLOR.ink, 1.5);
 
-      // Big outcome dashboard card
-      doc.setFillColor(this.themePrimary);
-      doc.rect(15, 50, 180, 50, 'F');
-      
-      // Teal border accent inside card
-      doc.setDrawColor(this.themeAccent);
-      doc.setLineWidth(1);
-      doc.rect(18, 53, 174, 44, 'D');
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(13);
-      doc.setTextColor('#FFFFFF');
-      doc.text('SİMÜLASYON NİHAİ KAZANIM ANALİZİ', 25, 63);
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(9);
-      doc.setTextColor('#CBD5E1');
-      doc.text('Hesaplanan toplam israf havuzu ve yalın iyileşme potansiyeli:', 25, 71);
-
-      // Value metrics inside big card
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor('#FFFFFF');
-      doc.text('Toplam COPQ Kaybı:', 25, 83);
-      doc.text('Beklenen Yıllık Kazanç (op3):', 25, 91);
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(13);
-      doc.setTextColor('#FDA4AF'); // soft red/rose
-      doc.text(`${copqPool.toLocaleString('tr-TR')} ₺/Yıl`, 85, 83);
-      
-      doc.setTextColor('#6EE7B7'); // soft light emerald
-      const estSaving = Math.round(copqPool * 0.22);
-      doc.text(`${estSaving.toLocaleString('tr-TR')} ₺/Yıl`, 85, 91);
-
-      // Closing text
-      let yPos = 115;
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(11);
-      doc.setTextColor(this.themePrimary);
-      doc.text('BAŞ DANIŞMAN NİHAİ SÖZÜ', 15, yPos);
-      
-      doc.setDrawColor('#E2E8F0');
-      doc.line(15, yPos + 2, 195, yPos + 2);
-      yPos += 8;
-
-      doc.setFont(fontName, 'normal');
-      doc.setFontSize(8.8);
-      doc.setTextColor('#334155');
-
-      const closingText = `Yapılan 1 günlük detaylı Gemba saha turu ve operasyonel veriler ışığında, ${data.company.companyName} bünyesinde gizli kalmış yüksek bir kârlılık potansiyeli tescillenmiştir. Mevcut %${overallScore} yalın skor, operasyonlardaki iyileşme iştahını göstermekte olup, planlı adımlarla ciro kârlılığını doğrudan artırabilecek enstrümanlar mevcuttur.
-
-Gemba Digital olarak, sahada tespit edilen SMED ve 5S fırsatlarının hayata geçirilmesi sürecini yakından izlemeyi ve her aşamada üst düzey danışmanlık hizmetlerimizle işletmenizin kârlılığını taahhüt edilen ROI oranlarına taşımayı hedefliyoruz. Bu rapor, sürdürülebilir büyüme yolculuğunuzda önemli bir mihenk taşıdır.`;
-
-      const splitClose = doc.splitTextToSize(closingText, 180);
-      doc.text(splitClose, 15, yPos);
-      yPos += splitClose.length * 4.5 + 22;
-
-      // Sign-off signature fields
-      if (yPos + 40 > 280) {
-        doc.addPage();
-        yPos = 40;
-      }
-
-      doc.setFont(fontName, 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(this.themePrimary);
-      doc.text('RAPOR ONAY VE İMZA MERKEZİ', 15, yPos);
-      yPos += 5;
-
-      doc.setDrawColor('#CBD5E1');
-      doc.setLineWidth(0.5);
-      doc.line(15, yPos, 195, yPos);
-      yPos += 15;
-
-      // Draw three signature lines
-      const sigs = [
-        { role: 'HAZIRLAYAN / BAŞ DANIŞMAN', name: data.company.consultant || 'Gemba Digital Danışmanı' },
-        { role: 'ÜRETİM / OPERASYON DİREKTÖRÜ', name: 'Saha Yetkilisi / Müdür' },
-        { role: 'GENEL MÜDÜR / ONAY', name: 'Şirket Temsilcisi / GM' }
-      ];
-
-      sigs.forEach((sig, idx) => {
-        const x = 15 + idx * 62;
-        doc.setDrawColor('#94A3B8');
-        doc.setLineWidth(0.5);
-        doc.line(x, yPos, x + 50, yPos);
-
-        doc.setFont(fontName, 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(this.themePrimary);
-        doc.text(sig.role, x, yPos + 4);
-
-        doc.setFont(fontName, 'normal');
-        doc.setFontSize(7.5);
-        doc.setTextColor(this.themeSecondary);
-        doc.text(sig.name, x, yPos + 8);
-      });
-
-    } catch (e) {
-      this.drawErrorFallback(doc, 'Sonuc Sayfasi', e, 50, fontName);
-    }
+    label(c, 'Rapor onay', PAGE.mx, 150);
+    doc.setDrawColor(COLOR.line); doc.setLineWidth(0.25); doc.line(PAGE.mx, 152, PAGE.w - PAGE.mx, 152);
+    const sigs: [string, string][] = [
+      ['Hazırlayan / baş danışman', d.company.consultant || '-'],
+      ['Üretim / operasyon direktörü', d.operation.gorusulen || ''],
+      ['Genel müdür / onay', ''],
+    ];
+    const sw = (CW - 20) / 3;
+    sigs.forEach(([role, name], i) => {
+      const x = PAGE.mx + i * (sw + 10);
+      doc.setDrawColor(COLOR.muted); doc.setLineWidth(0.3); doc.line(x, 175, x + sw, 175);
+      label(c, role, x, 180, COLOR.ink);
+      setText(c, 7.6, COLOR.muted); doc.text(name, x, 184.5);
+    });
   }
+}
+
+/** Metni en fazla n satıra kısaltır */
+function clip(c: Ctx, text: string, w: number, n: number): string {
+  const lines = c.doc.splitTextToSize(text || '', w) as string[];
+  if (lines.length <= n) return text || '';
+  return lines.slice(0, n).join(' ').replace(/\s+\S*$/, '') + '…';
 }

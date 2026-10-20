@@ -1,4 +1,16 @@
 import { Company, Assessment, OperationData, Observation, SavingResult } from '../../db';
+import type { QlaResult } from '../../engine/qla';
+
+/** Uygulamanın o an ekranda gösterdiği hesap sonuçları — rapordaki tüm rakamlar buradan gelir */
+export interface ReportMetrics {
+  qla: QlaResult;
+  currency: string;
+  turnover: number;
+  maturityScore: number;
+  answeredCount: number;
+  /** Olgunluk değerlendirmesinden çıkan, en zayıf kriterlere ait bulgular */
+  findings: { no: number; score: number; title: string; obs: string; finImpact: string; leanTool: string }[];
+}
 
 export interface ReportData {
   company: Company;
@@ -15,5 +27,6 @@ export interface ReportData {
     longTermProjects: string[];
     rawMarkdown?: string;
   };
+  metrics?: ReportMetrics;
   validationErrors: string[];
 }

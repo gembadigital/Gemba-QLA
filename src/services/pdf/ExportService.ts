@@ -1,17 +1,18 @@
 import { ReportBuilder } from './ReportBuilder';
 import { ReportGenerator } from './ReportGenerator';
+import type { ReportMetrics } from './types';
 
 export class ExportService {
   /**
    * Main entry point to compile and download a professional PDF report for a given company.
    * Handles names sanitization, date stamping, and graceful error boundaries.
    */
-  public static async exportCompanyReport(companyId: string): Promise<boolean> {
+  public static async exportCompanyReport(companyId: string, metrics?: ReportMetrics): Promise<boolean> {
     try {
       console.log(`Starting PDF Report generation for Company: ${companyId}`);
 
       // 1. Fetch, compile, and validate all relevant relational data
-      const reportData = ReportBuilder.buildReportData(companyId);
+      const reportData = ReportBuilder.buildReportData(companyId, metrics);
 
       // Log validation errors (if any) as warnings
       if (reportData.validationErrors.length > 0) {
@@ -42,7 +43,7 @@ export class ExportService {
         .replace(/__+/g, '_'); // prevent multiple consecutive underscores
 
       const dateStamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-      const filename = `${sanitizedName}_Gemba_Assessment_${dateStamp}.pdf`;
+      const filename = `${sanitizedName}_QLA_Yonetici_Raporu_${dateStamp}.pdf`;
 
       // 4. Trigger direct client-side save/download
       doc.save(filename);

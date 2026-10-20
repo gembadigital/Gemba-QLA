@@ -460,9 +460,9 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   loss_hurda = 0,
   loss_iscilik = 0,
   loss_kapasite = 0,
-  urunGrubuEnCok = '95 kW Motor',
-  urunGrubuAdet = '25.000',
-  urunGrubuOran = '35',
+  urunGrubuEnCok = '',
+  urunGrubuAdet = '',
+  urunGrubuOran = '',
   useProductFamilyCost = false,
   setUseProductFamilyCost,
   useProductFamilyRecovery = false,
@@ -477,7 +477,8 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   const sel = qla.selected;
   const shortName = (name: string) => name.replace(' Programı', '').replace('Programı', '');
 
-  const familyRatio = (Number(urunGrubuOran) || 35) / 100;
+  // Ciro payı girilmediyse ürün ailesi ölçeklemesi yapılmaz
+  const familyRatio = Number(urunGrubuOran) > 0 ? Math.min(100, Number(urunGrubuOran)) / 100 : 1;
 
   const m_setup_min = useProductFamilyRecovery ? opp_setup_min * familyRatio : opp_setup_min;
   const m_setup_max = useProductFamilyRecovery ? opp_setup_max * familyRatio : opp_setup_max;

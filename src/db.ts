@@ -30,6 +30,12 @@ export interface OperationData {
   currency?: string;
   /** Danışmanın ROI için seçtiği paket ('' = sistemin önerisi) */
   selectedPackageId?: string;
+  /** En çok üretilen ürün ailesi (ilk yıl odak) */
+  urunGrubuEnCok?: string;
+  urunGrubuAdet?: string;
+  urunGrubuOran?: string;
+  useProductFamilyCost?: boolean;
+  useProductFamilyRecovery?: boolean;
   // Field values
   setupMachineCount: string;
   annualVolume: string;
@@ -786,6 +792,11 @@ export const GembaDB = {
         planRealizationPct: operationFields.planRealizationPct ?? existingOp?.planRealizationPct ?? '',
         sustainYears: operationFields.sustainYears ?? existingOp?.sustainYears ?? '3',
         selectedPackageId: operationFields.selectedPackageId ?? existingOp?.selectedPackageId ?? '',
+        urunGrubuEnCok: operationFields.urunGrubuEnCok ?? existingOp?.urunGrubuEnCok ?? '',
+        urunGrubuAdet: operationFields.urunGrubuAdet ?? existingOp?.urunGrubuAdet ?? '',
+        urunGrubuOran: operationFields.urunGrubuOran ?? existingOp?.urunGrubuOran ?? '',
+        useProductFamilyCost: operationFields.useProductFamilyCost ?? existingOp?.useProductFamilyCost ?? false,
+        useProductFamilyRecovery: operationFields.useProductFamilyRecovery ?? existingOp?.useProductFamilyRecovery ?? false,
         oee: operationFields.oee ?? existingOp?.oee ?? '',
         coveredArea: operationFields.coveredArea ?? existingOp?.coveredArea ?? '',
         operatorsCount: operationFields.operatorsCount ?? existingOp?.operatorsCount ?? '',

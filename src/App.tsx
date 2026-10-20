@@ -338,6 +338,11 @@ export default function App() {
       setPlanRealizationPct(details.operation.planRealizationPct || '');
       setSustainYears(Number(details.operation.sustainYears) || 3);
       setSelectedPackageId(details.operation.selectedPackageId || undefined);
+      setUrunGrubuEnCok(details.operation.urunGrubuEnCok || '');
+      setUrunGrubuAdet(details.operation.urunGrubuAdet || '');
+      setUrunGrubuOran(details.operation.urunGrubuOran || '');
+      setUseProductFamilyCost(!!details.operation.useProductFamilyCost);
+      setUseProductFamilyRecovery(!!details.operation.useProductFamilyRecovery);
       setOee(details.operation.oee ?? '');
       setCoveredArea(details.operation.coveredArea ?? '');
       setOperatorsCount(details.operation.operatorsCount ?? '');
@@ -372,6 +377,11 @@ export default function App() {
       setScores({});
       setChatMessages([]);
       setSelectedPackageId(undefined);
+      setUrunGrubuEnCok('');
+      setUrunGrubuAdet('');
+      setUrunGrubuOran('');
+      setUseProductFamilyCost(false);
+      setUseProductFamilyRecovery(false);
     }
     
     if (details.assessment) {
@@ -529,11 +539,12 @@ export default function App() {
     setCostAutoSnapshot(costSnapshotOf([costSuggestion.malzeme.ort, costSuggestion.iscilik.ort, costSuggestion.enerji.ort, costSuggestion.bakim.ort, costSuggestion.genel.ort, costSuggestion.kar.ort].map(f)));
   };
 
-  const [urunGrubuEnCok, setUrunGrubuEnCok] = useState(() => localStorage.getItem('gp_urunGrubuEnCok') || '95 kW Motor');
-  const [urunGrubuAdet, setUrunGrubuAdet] = useState(() => localStorage.getItem('gp_urunGrubuAdet') || '25.000');
-  const [urunGrubuOran, setUrunGrubuOran] = useState(() => localStorage.getItem('gp_urunGrubuOran') || '35');
-  const [useProductFamilyCost, setUseProductFamilyCost] = useState(() => localStorage.getItem('gp_useProductFamilyCost') === 'true');
-  const [useProductFamilyRecovery, setUseProductFamilyRecovery] = useState(() => localStorage.getItem('gp_useProductFamilyRecovery') === 'true');
+  // Ürün ailesi alanları firma kaydında saklanır (loadCompany ile yüklenir, performSave ile kaydedilir)
+  const [urunGrubuEnCok, setUrunGrubuEnCok] = useState('');
+  const [urunGrubuAdet, setUrunGrubuAdet] = useState('');
+  const [urunGrubuOran, setUrunGrubuOran] = useState('');
+  const [useProductFamilyCost, setUseProductFamilyCost] = useState(false);
+  const [useProductFamilyRecovery, setUseProductFamilyRecovery] = useState(false);
 
   const prevSectorRef = useRef(sektor);
   const prevProdRef = useRef(urunGrubu);
@@ -955,9 +966,10 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
 
   // Maliyet yapısı: boş bırakılan oranlar sektör varsayılanından tamamlanır
   const sectorCostStr = getSectorCostStructure(sektor, urunGrubu);
-  const urunGrubuOranNum = Number(urunGrubuOran) || 35;
+  // Ciro payı girilmediyse ürün ailesi hesabı devreye girmez (gizli varsayılan yok)
+  const urunGrubuOranNum = Math.min(100, Math.max(0, Number(urunGrubuOran) || 0));
   const productFamilyTurnover = turnoverNum * (urunGrubuOranNum / 100);
-  const currentCostTurnoverBase = useProductFamilyCost ? productFamilyTurnover : turnoverNum;
+  const currentCostTurnoverBase = useProductFamilyCost && urunGrubuOranNum > 0 ? productFamilyTurnover : turnoverNum;
   const costOr = (val: string, fallback: number) => (val === '' || val === undefined || isNaN(Number(val)) ? fallback : Number(val));
   const costPctInput = {
     malzeme: costOr(costPropMaterial, sectorCostStr.malzeme * 0.9),
@@ -1373,6 +1385,11 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
         planRealizationPct,
         sustainYears: String(sustainYears),
         selectedPackageId: selectedPackageId ?? '',
+        urunGrubuEnCok,
+        urunGrubuAdet,
+        urunGrubuOran,
+        useProductFamilyCost,
+        useProductFamilyRecovery,
         oee,
         coveredArea,
         operatorsCount,
@@ -1475,7 +1492,8 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
     coveredArea, operatorsCount, setupFrequency, setupDuration, affectedOpsSetup, grossLaborCost,
     wizardGrossSalary, wizardSgkRate, wizardYemek, wizardServis, wizardSeveranceRate, wizardLeaveRate, wizardSideBenefits,
     costPropMaterial, costPropLabor, costPropEnergy, costPropMaintenance, costPropOverhead, costPropProfit,
-    consultant, scores, chatMessages, totalScore, total_economic_max, totalOp1Lira, setupLaborLoss, inefficiencyLaborLoss, totalLossExpected, eurTry, usdTry
+    consultant, scores, chatMessages, totalScore, total_economic_max, totalOp1Lira, setupLaborLoss, inefficiencyLaborLoss, totalLossExpected, eurTry, usdTry,
+    selectedPackageId, urunGrubuEnCok, urunGrubuAdet, urunGrubuOran, useProductFamilyCost, useProductFamilyRecovery
   ]);
 
   const copyToClipboard = () => {

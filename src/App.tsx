@@ -386,29 +386,30 @@ export default function App() {
       setGorusulen(details.operation.gorusulen || '');
       setTalepEdilenHizmet(details.operation.talepEdilenHizmet || 'Yalın Dönüşüm Proje Danışmanlığı');
       
-      setSetupMachineCount(details.operation.setupMachineCount || '5');
-      setAnnualVolume(details.operation.annualVolume || '500.000');
+      setSetupMachineCount(details.operation.setupMachineCount ?? '');
+      setAnnualVolume(details.operation.annualVolume ?? '');
       setProductionUnit(details.operation.productionUnit || 'Adet');
-      setTurnoverLira(details.operation.turnoverLira || '150.000.000');
-      setPlannedEfficiency(details.operation.plannedEfficiency || '85');
-      setActualEfficiency(details.operation.actualEfficiency || '62');
-      setCopqRate(details.operation.copqRate || '4.5');
-      setScrapRate(details.operation.scrapRate || '1.8');
-      setReworkRate(details.operation.reworkRate || '2.7');
-      setOvertimeRate(details.operation.overtimeRate || '8.5');
-      setLeadTime(details.operation.leadTime || '12');
+      setTurnoverLira(details.operation.turnoverLira ?? '');
+      setPlannedEfficiency(details.operation.plannedEfficiency ?? '');
+      setActualEfficiency(details.operation.actualEfficiency ?? '');
+      setCopqRate(details.operation.copqRate ?? '');
+      setScrapRate(details.operation.scrapRate ?? '');
+      setReworkRate(details.operation.reworkRate ?? '');
+      setOvertimeRate(details.operation.overtimeRate ?? '');
+      setLeadTime(details.operation.leadTime ?? '');
       setStockUnits(details.operation.stockUnits || '');
+      setStockValue(details.operation.stockValue || '');
       setSetupTimePct(details.operation.setupTimePct || '');
       setBreakdownPct(details.operation.breakdownPct || '');
       setPlanRealizationPct(details.operation.planRealizationPct || '');
       setSustainYears(Number(details.operation.sustainYears) || 3);
-      setOee(details.operation.oee || '58');
-      setCoveredArea(details.operation.coveredArea || '4.500');
-      setOperatorsCount(details.operation.operatorsCount || '120');
-      setSetupFrequency(details.operation.setupFrequency || '5');
-      setSetupDuration(details.operation.setupDuration || '45');
-      setAffectedOpsSetup(details.operation.affectedOpsSetup || '3');
-      setGrossLaborCost(details.operation.grossLaborCost || '48.000');
+      setOee(details.operation.oee ?? '');
+      setCoveredArea(details.operation.coveredArea ?? '');
+      setOperatorsCount(details.operation.operatorsCount ?? '');
+      setSetupFrequency(details.operation.setupFrequency ?? '');
+      setSetupDuration(details.operation.setupDuration ?? '');
+      setAffectedOpsSetup(details.operation.affectedOpsSetup ?? '');
+      setGrossLaborCost(details.operation.grossLaborCost ?? '');
 
       setWizardGrossSalary(details.operation.wizardGrossSalary || '30.000');
       setWizardSgkRate(details.operation.wizardSgkRate ?? 17.5);
@@ -466,8 +467,8 @@ export default function App() {
 
   // Modern OpEx Industrial Financial Analysis variables
   const [currency, setCurrency] = useState(() => localStorage.getItem('gp_currency') || 'TRY');
-  const [setupMachineCount, setSetupMachineCount] = useState(() => localStorage.getItem('gp_setupMachineCount') || '5');
-  const [annualVolume, setAnnualVolume] = useState(() => localStorage.getItem('gp_annualVolume') || '500.000');
+  const [setupMachineCount, setSetupMachineCount] = useState(() => localStorage.getItem('gp_setupMachineCount') ?? '');
+  const [annualVolume, setAnnualVolume] = useState(() => localStorage.getItem('gp_annualVolume') ?? '');
   const [productionUnit, setProductionUnit] = useState(() => localStorage.getItem('gp_productionUnit') || 'Adet');
   const [authUser, setAuthUser] = useState<string | null>(() => localStorage.getItem('gp_auth_user'));
 
@@ -476,16 +477,18 @@ export default function App() {
     setAuthUser(null);
   };
 
-  const [turnoverLira, setTurnoverLira] = useState(() => localStorage.getItem('gp_turnoverLira') || '150.000.000');
-  const [plannedEfficiency, setPlannedEfficiency] = useState(() => localStorage.getItem('gp_plannedEfficiency') || '85');
-  const [actualEfficiency, setActualEfficiency] = useState(() => localStorage.getItem('gp_actualEfficiency') || '62');
-  const [copqRate, setCopqRate] = useState(() => localStorage.getItem('gp_copqRate') || '4.5');
-  const [scrapRate, setScrapRate] = useState(() => localStorage.getItem('gp_scrapRate') || '1.8');
-  const [reworkRate, setReworkRate] = useState(() => localStorage.getItem('gp_reworkRate') || '2.7');
-  const [overtimeRate, setOvertimeRate] = useState(() => localStorage.getItem('gp_overtimeRate') || '8.5');
-  const [leadTime, setLeadTime] = useState(() => localStorage.getItem('gp_leadTime') || '12');
-  const [oee, setOee] = useState(() => localStorage.getItem('gp_oee') || '58');
+  const [turnoverLira, setTurnoverLira] = useState(() => localStorage.getItem('gp_turnoverLira') ?? '');
+  const [plannedEfficiency, setPlannedEfficiency] = useState(() => localStorage.getItem('gp_plannedEfficiency') ?? '');
+  const [actualEfficiency, setActualEfficiency] = useState(() => localStorage.getItem('gp_actualEfficiency') ?? '');
+  const [copqRate, setCopqRate] = useState(() => localStorage.getItem('gp_copqRate') ?? '');
+  const [scrapRate, setScrapRate] = useState(() => localStorage.getItem('gp_scrapRate') ?? '');
+  const [reworkRate, setReworkRate] = useState(() => localStorage.getItem('gp_reworkRate') ?? '');
+  const [overtimeRate, setOvertimeRate] = useState(() => localStorage.getItem('gp_overtimeRate') ?? '');
+  const [leadTime, setLeadTime] = useState(() => localStorage.getItem('gp_leadTime') ?? '');
+  const [oee, setOee] = useState(() => localStorage.getItem('gp_oee') ?? '');
   const [stockUnits, setStockUnits] = useState(() => localStorage.getItem('gp_stockUnits') || '');
+  const [stockValue, setStockValue] = useState(() => localStorage.getItem('gp_stockValue') || '');
+  useEffect(() => { localStorage.setItem('gp_stockValue', stockValue); }, [stockValue]);
   const [setupTimePct, setSetupTimePct] = useState(() => localStorage.getItem('gp_setupTimePct') || '');
   const [breakdownPct, setBreakdownPct] = useState(() => localStorage.getItem('gp_breakdownPct') || '');
   const [planRealizationPct, setPlanRealizationPct] = useState(() => localStorage.getItem('gp_planRealizationPct') || '');
@@ -494,12 +497,12 @@ export default function App() {
   const [sustainYears, setSustainYears] = useState<number>(() => Number(localStorage.getItem('gp_sustainYears')) || 3);
   useEffect(() => { localStorage.setItem('gp_stockUnits', stockUnits); }, [stockUnits]);
   useEffect(() => { localStorage.setItem('gp_sustainYears', String(sustainYears)); }, [sustainYears]);
-  const [coveredArea, setCoveredArea] = useState(() => localStorage.getItem('gp_coveredArea') || '4.500');
-  const [operatorsCount, setOperatorsCount] = useState(() => localStorage.getItem('gp_operatorsCount') || '120');
-  const [setupFrequency, setSetupFrequency] = useState(() => localStorage.getItem('gp_setupFrequency') || '5');
-  const [setupDuration, setSetupDuration] = useState(() => localStorage.getItem('gp_setupDuration') || '45');
-  const [affectedOpsSetup, setAffectedOpsSetup] = useState(() => localStorage.getItem('gp_affectedOpsSetup') || '3');
-  const [grossLaborCost, setGrossLaborCost] = useState(() => localStorage.getItem('gp_grossLaborCost') || '48.000');
+  const [coveredArea, setCoveredArea] = useState(() => localStorage.getItem('gp_coveredArea') ?? '');
+  const [operatorsCount, setOperatorsCount] = useState(() => localStorage.getItem('gp_operatorsCount') ?? '');
+  const [setupFrequency, setSetupFrequency] = useState(() => localStorage.getItem('gp_setupFrequency') ?? '');
+  const [setupDuration, setSetupDuration] = useState(() => localStorage.getItem('gp_setupDuration') ?? '');
+  const [affectedOpsSetup, setAffectedOpsSetup] = useState(() => localStorage.getItem('gp_affectedOpsSetup') ?? '');
+  const [grossLaborCost, setGrossLaborCost] = useState(() => localStorage.getItem('gp_grossLaborCost') ?? '');
   const [isCostWizardOpen, setIsCostWizardOpen] = useState(false);
   const [wizardGrossSalary, setWizardGrossSalary] = useState(() => localStorage.getItem('gp_wiz_gross') || '30.000');
   const [wizardSgkRate, setWizardSgkRate] = useState(() => Number(localStorage.getItem('gp_wiz_sgk_rate') || '17.5'));
@@ -1046,6 +1049,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
     operators: opsNum,
     leadTimeDays: leadTimeNum,
     annualVolume: volNum,
+    stockValue: Number(stockValue.toString().replace(/\./g, '')) || 0,
     stockUnits: Number(stockUnits.toString().replace(/\./g, '')) || 0,
     currency,
     sustainYears,
@@ -1376,19 +1380,11 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
       setTalepEdilenHizmet('Yalın Dönüşüm Proje Danışmanlığı');
       setNotlar('');
       
-      setAnnualVolume('500000');
-      setTurnoverLira('150000000');
-      setPlannedEfficiency('85');
-      setActualEfficiency('62');
-      setCopqRate('4.5');
-      setLeadTime('12');
-      setOee('58');
-      setCoveredArea('4500');
-      setOperatorsCount('120');
-      setSetupFrequency('9');
-      setSetupDuration('45');
-      setAffectedOpsSetup('3');
-      setGrossLaborCost('35500');
+      // Sıfırla: demo rakam yerine boş alanlar (boş alan = "veri yok", hesaba katılmaz)
+      [setAnnualVolume, setTurnoverLira, setPlannedEfficiency, setActualEfficiency, setCopqRate, setLeadTime, setOee,
+       setCoveredArea, setOperatorsCount, setSetupFrequency, setSetupDuration, setAffectedOpsSetup, setGrossLaborCost,
+       setScrapRate, setReworkRate, setOvertimeRate, setStockValue, setSetupTimePct, setBreakdownPct, setPlanRealizationPct,
+       setSetupMachineCount].forEach(set => set(''));
 
       setScores(normalizeScores({}));
     }
@@ -1433,6 +1429,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
         overtimeRate,
         leadTime,
         stockUnits,
+        stockValue,
         setupTimePct,
         breakdownPct,
         planRealizationPct,
@@ -1500,7 +1497,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
     performSave();
   }, [
     currentCompanyId, firmaAdi, sektor, adres, urunGrubu, calisanSayisi, vardiya, gorusulen, tarih, talepEdilenHizmet, notlar,
-    activeTab, currency, setupMachineCount, annualVolume, productionUnit, turnoverLira, plannedEfficiency, actualEfficiency, copqRate, scrapRate, reworkRate, overtimeRate, leadTime, stockUnits, setupTimePct, breakdownPct, planRealizationPct, sustainYears, oee,
+    activeTab, currency, setupMachineCount, annualVolume, productionUnit, turnoverLira, plannedEfficiency, actualEfficiency, copqRate, scrapRate, reworkRate, overtimeRate, leadTime, stockUnits, stockValue, setupTimePct, breakdownPct, planRealizationPct, sustainYears, oee,
     coveredArea, operatorsCount, setupFrequency, setupDuration, affectedOpsSetup, grossLaborCost,
     wizardGrossSalary, wizardSgkRate, wizardYemek, wizardServis, wizardSeveranceRate, wizardLeaveRate, wizardSideBenefits,
     costPropMaterial, costPropLabor, costPropEnergy, costPropMaintenance, costPropOverhead, costPropProfit,
@@ -3215,17 +3212,17 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                     <span className="text-[10px] text-amber-800/80 font-semibold mt-1 italic">
                       * Sipariş alımından sevkiyata kadar geçen toplam takvim günü. Stok değeri bu süreden tahmin edilir (Little Kanunu): günlük üretim maliyeti × lead time.
                     </span>
-                    <label className="text-[10px] font-extrabold text-amber-900 tracking-wider uppercase mt-2">Toplam Stok Miktarı ({productionUnit}) — Opsiyonel</label>
+                    <label className="text-[10px] font-extrabold text-amber-900 tracking-wider uppercase mt-2">Toplam Stok Değeri ({currencySymbol}) — Opsiyonel</label>
                     <input
                       type="text"
-                      value={formatNumberWithDots(stockUnits)}
-                      onChange={e => setStockUnits(e.target.value.replace(/\D/g, ''))}
+                      value={formatNumberWithDots(stockValue)}
+                      onChange={e => { setStockValue(e.target.value.replace(/\D/g, '')); if (stockUnits) setStockUnits(''); }}
                       className="border border-amber-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-amber-950 bg-white leading-relaxed focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-600"
-                      placeholder="Biliniyorsa: hammadde + yarı mamul + mamul"
+                      placeholder="Biliniyorsa: hammadde + yarı mamul + mamul stoğunun parasal değeri"
                     />
                     <span className="text-[10px] text-amber-800/80 font-semibold italic">
                       {qla.inventory.value > 0
-                        ? <>Tahmini stok değeri: <strong>{currencySymbol}{qla.inventory.value.toLocaleString('tr-TR')}</strong> ({qla.inventory.source === 'stok adedi' ? `stok × birim maliyet ${currencySymbol}${qla.inventory.unitCost.toLocaleString('tr-TR')}` : 'lead time ile tahmin'}) · yıllık taşıma maliyeti %{Math.round(qla.inventory.carryingRate * 100)}</>
+                        ? <>Tahmini stok değeri: <strong>{currencySymbol}{qla.inventory.value.toLocaleString('tr-TR')}</strong> ({qla.inventory.source === 'stok değeri' ? 'girilen stok değeri' : qla.inventory.source === 'stok adedi' ? `eski kayıt: stok adedi × birim maliyet ${currencySymbol}${qla.inventory.unitCost.toLocaleString('tr-TR')}` : 'lead time ile tahmin'}) · yıllık taşıma maliyeti %{Math.round(qla.inventory.carryingRate * 100)}</>
                         : 'Lead time veya stok miktarı girilirse stok taşıma maliyeti hesaplanır.'}
                     </span>
                   </div>
@@ -3758,10 +3755,19 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                     <p className="text-[11px] text-slate-500 italic mt-1 font-medium">
                       * Bu kayıp havuzu, direkt malzeme firelerini, düzeltme/rework işçiliklerini, fazla mesai yüklerini ve duruş kaynaklı kapasite kayıplarını içerir. Detaylı analizler ve grafikler ROI modülünde sunulmuştur.
                     </p>
+                    {qla.warnings.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {qla.warnings.map((w, i) => (
+                          <p key={i} className={`text-[11px] font-semibold rounded-lg px-2.5 py-1.5 border ${w.startsWith('UYARI') || w.includes('giriş hatası') || w.startsWith('İşçilik tabanı') ? 'bg-red-50 border-red-200 text-red-800' : 'bg-amber-50 border-amber-200 text-amber-900'}`}>
+                            {w}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                     <div className="mt-2.5 pt-3 border-t border-rose-200/50 text-[10.5px] text-slate-600 space-y-1 bg-white/40 p-2.5 rounded-xl border border-rose-100">
                       <p className="font-extrabold uppercase tracking-widest text-rose-950 text-[9px] mb-1">DEĞERLENDİRME VERİ TABANI VE HEDEF PARAMETRELERİ:</p>
                       <p>
-                        • <strong>Mevcut Durum Girdileri:</strong> Sanayi tesisi gözlemleri uyarınca plastik enjeksiyon grubu OEE değeri veritabanında <strong>%{oeeNum}</strong>, mamul hurda oranı <strong>%{scrapRateNum}</strong>, rework/tamir oranı ise <strong>%{reworkRateNum || 1.5}</strong> olarak esas alınmıştır.
+                        • <strong>Mevcut Durum Girdileri:</strong> Saha görüşmesinde alınan veriler: OEE <strong>{oeeNum ? `%${oeeNum}` : 'ölçülmüyor'}</strong>, hurda <strong>{scrapRateNum ? `%${scrapRateNum}` : 'veri yok'}</strong>, rework/tamir <strong>{reworkRateNum ? `%${reworkRateNum}` : 'veri yok'}</strong>.
                       </p>
                       <p>
                         • <strong>Modelleme Hedef Değerleri:</strong> Olgunluk skoruna göre önerilen <strong>{qla.recommended.def.name} ({qla.recommended.def.days} adam-gün)</strong> ile kayıp havuzunun <strong>%{Math.round(qla.recommended.def.recovery[0] * 100)}-{Math.round(qla.recommended.def.recovery[1] * 100)}</strong>'i geri kazanılır. Hedefler: {oeeNum > 0 ? <>OEE %{oeeNum} → <strong>%{Math.min(90, oeeNum + qla.recommended.def.kpi.oeePoints)}</strong>, </> : null}kalitesizlik oranında <strong>-%{qla.recommended.def.kpi.copq}</strong>, setup süresinde <strong>-%{qla.recommended.def.kpi.setup}</strong>.

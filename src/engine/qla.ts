@@ -34,6 +34,12 @@ export const ASSUMPTIONS = {
   recoveryBand: [0.25, 0.35] as [number, number],
   /** Bu sürenin üzerindeki geri ödemede danışmana daha küçük bir giriş paketi hatırlatılır (ay) — bilgi amaçlı */
   longPaybackMonths: 24,
+  /** Stok değeri cironun bu oranını aşarsa giriş hatası sayılır */
+  maxStockShareOfTurnover: 0.6,
+  /** Toplam kayıp cironun bu oranını aşarsa veri hatası uyarısı */
+  maxLossShareOfTurnover: 0.5,
+  /** Ciro × işçilik oranı ile kişi × maliyet arasındaki fark bu oranı aşarsa uyarı */
+  laborMismatchTolerance: 0.5,
   /** Lead time takvim günü girildiği için Little Kanunu'nda yıl 365 gün alınır */
   calendarDaysPerYear: 365,
   /** Stok taşıma maliyeti (finansman + depolama + eskime), yıllık — TL'de faiz yüksek */
@@ -144,7 +150,9 @@ export interface QlaInput {
   leadTimeDays?: number;
   /** Yıllık üretim hacmi (adet/ton…); birim maliyet için */
   annualVolume?: number;
-  /** Opsiyonel: eldeki toplam stok miktarı (hammadde + yarı mamul + mamul, üretim birimi cinsinden) */
+  /** Opsiyonel: toplam stok DEĞERİ (hammadde + yarı mamul + mamul), seçili para biriminde. Öncelikli kaynak. */
+  stockValue?: number;
+  /** Eski kayıtlar için: stok miktarı (üretim birimi). stockValue yoksa birim maliyetle değerlenir. */
   stockUnits?: number;
   /** Para birimi (stok taşıma oranı için) */
   currency?: string;
@@ -224,7 +232,7 @@ export interface QlaResult {
   opportunities: OpportunityLine[];
   breakEven: { month: number; cumSavings: number; cumCost: number; netFlow: number }[];
   breakEvenMonth: number;
-  inventory: { value: number; source: 'stok adedi' | 'lead time' | 'yok'; unitCost: number; carryingRate: number };
+  inventory: { value: number; source: 'stok değeri' | 'stok adedi' | 'lead time' | 'yok'; unitCost: number; carryingRate: number };
   /** Kapasite büyüme fırsatı — talep varsa ek kâr; ROI'ye dahil edilmez */
   capacityUpside: { hasData: boolean; freedPct: number; extraRevenue: number; extraContribution: number; contributionPct: number; demandEvidence: boolean; inPool: number };
   /** Zaman kayıplarının ilave kapasite etkisi (kalem bazında) */
@@ -258,6 +266,13 @@ export function computeQla(input: QlaInput): QlaResult {
   if (iscilik === 0 && pos(input.operators) && pos(input.laborCostMonthly)) {
     iscilik = input.operators * input.laborCostMonthly * 12;
     laborFromHeadcount = true;
+  }
+  const laborByHeadcount = pos(input.operators) * pos(input.laborCostMonthly) * 12;
+  if (!laborFromHeadcount && iscilik > 0 && laborByHeadcount > 0) {
+    const ratio = iscilik / laborByHeadcount;
+    if (ratio > 1 + A.laborMismatchTolerance || ratio < 1 / (1 + A.laborMismatchTolerance)) {
+      warnings.push(`İşçilik tabanı tutarsız: ciro × işçilik oranı = ${Math.round(iscilik).toLocaleString('tr-TR')}, operatör × aylık maliyet × 12 = ${Math.round(laborByHeadcount).toLocaleString('tr-TR')} (${Math.round(ratio * 10) / 10} kat). İşçilik oranı taşeron/endirekt işçilik içeriyorsa doğrudur; içermiyorsa oranı düzeltin — işçilik kaynaklı kayıplar bu tabandan hesaplanıyor.`);
+    }
   }
   const enerji = C * pos(pct.enerji) / 100;
   const bakim = C * pos(pct.bakim) / 100;
@@ -375,21 +390,34 @@ export function computeQla(input: QlaInput): QlaResult {
   const volume = pos(input.annualVolume ?? 0);
   const variableCost = malzeme + iscilik + enerji;
   const unitCost = volume > 0 ? variableCost / volume : 0;
+  const stockValue = pos(input.stockValue ?? 0);
   const stockUnits = pos(input.stockUnits ?? 0);
   const lt = pos(input.leadTimeDays ?? 0);
   let invValue = 0;
   let invSource: QlaResult['inventory']['source'] = 'yok';
-  if (stockUnits > 0 && unitCost > 0) {
+  if (stockValue > 0) {
+    invValue = stockValue;
+    invSource = 'stok değeri';
+  } else if (stockUnits > 0 && unitCost > 0) {
     invValue = stockUnits * unitCost;
     invSource = 'stok adedi';
-  } else if (lt > 0 && C > 0) {
+  }
+  // Akıl kontrolü: stok cironun %60'ını aşıyorsa giriş hatası (adet ↔ TL karışması) kabul edilir, lead time'a dönülür
+  if (invValue > 0 && C > 0 && invValue > A.maxStockShareOfTurnover * C) {
+    warnings.push(`Stok değeri ${Math.round(invValue).toLocaleString('tr-TR')} hesaplandı (cironun ${Math.round(invValue / C * 10) / 10} katı) — giriş hatası olabilir (adet yerine tutar ya da tersi). Stok hesabı yok sayıldı; stok değerini para birimi olarak girin.`);
+    invValue = 0;
+    invSource = 'yok';
+  }
+  if (invSource === 'yok' && lt > 0 && C > 0) {
     // Malzeme süreç başında, işçilik/enerji süreç boyunca eklenir → ortalama değer malzeme + ½ dönüşüm
     invValue = (malzeme + 0.5 * (iscilik + enerji)) / A.calendarDaysPerYear * lt;
     invSource = 'lead time';
   }
   const carryingRate = A.carryingRate[input.currency ?? 'TRY'] ?? A.carryingRate.other;
   add('stok', invValue * carryingRate, invValue > 0,
-    invSource === 'stok adedi'
+    invSource === 'stok değeri'
+      ? `Stok değeri ${Math.round(stockValue).toLocaleString('tr-TR')} × %${Math.round(carryingRate * 100)} taşıma`
+      : invSource === 'stok adedi'
       ? `Stok ${stockUnits.toLocaleString('tr-TR')} birim × birim maliyet (Malzeme+İşçilik+Enerji / hacim) × %${Math.round(carryingRate * 100)} taşıma`
       : `(Malzeme + ½ (İşçilik + Enerji)) / ${A.calendarDaysPerYear} gün × Lead time ${lt} takvim günü × %${Math.round(carryingRate * 100)} taşıma`,
     'Lead time veya stok adedi');
@@ -398,6 +426,9 @@ export function computeQla(input: QlaInput): QlaResult {
   lines.sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
   const lossByKey = Object.fromEntries(lines.map(l => [l.key, l.amount])) as Record<LossKey, number>;
   const totalLoss = lines.reduce((s, l) => s + l.amount, 0);
+  if (C > 0 && totalLoss > A.maxLossShareOfTurnover * C) {
+    warnings.unshift(`UYARI: Toplam kayıp cironun %${Math.round(totalLoss / C * 100)}'i — veri giriş hatası olmalı (birim, nokta/virgül veya yanlış alan). Girdileri kontrol edin.`);
+  }
   if (input.costFromSector) warnings.push('Maliyet yapısı sektör ortalamasından alındı (müşteri verisi değil); toplantıda müşterinin kendi oranlarını teyit edin.');
   const missing = lines.filter(l => !l.hasData).map(l => l.missing);
   if (missing.length) warnings.push(`Veri girilmediği için hesaba katılmadı: ${missing.join(', ')}.`);

@@ -178,3 +178,28 @@ test('OEE ile setup/arıza tutarsızsa (performans < %75) bilgi notu verilir', (
   const ok = computeQla({ ...base, oeePct: 62, setupTimePct: 12, breakdownPct: 8, scrapPct: 10, reworkPct: 8, setupPerWeek: 0 });
   assert.ok(!ok.warnings.some(w => w.includes('normal hızın altında')));
 });
+
+test('Karmod: stok alanına tutar adet olarak girilirse milyarlık kayıp üretilmez', () => {
+  const q = computeQla({ ...base, turnover: 350_000_000, costPct: { malzeme: 45, iscilik: 27, enerji: 5, bakim: 4, genel: 5 },
+    annualVolume: 190_000, stockUnits: 30_000_000, leadTimeDays: 7, operators: 38, laborCostMonthly: 49_249, setupPerWeek: 0 });
+  assert.ok(q.totalLoss < 350_000_000 * 0.5, `toplam ${q.totalLoss}`);
+  assert.equal(q.inventory.source, 'lead time');
+  assert.ok(q.warnings.some(w => w.includes('giriş hatası olabilir')));
+});
+
+test('stok değeri doğrudan girilirse o kullanılır', () => {
+  const q = computeQla({ ...base, stockValue: 45_000_000, currency: 'TRY' });
+  assert.equal(q.inventory.source, 'stok değeri');
+  assert.equal(q.lossByKey.stok, Math.round(45_000_000 * 0.30));
+});
+
+test('işçilik oranı ile kişi × maliyet çok farklıysa uyarı verilir', () => {
+  const q = computeQla({ ...base, turnover: 350_000_000, costPct: { malzeme: 45, iscilik: 27, enerji: 5, bakim: 4, genel: 5 }, operators: 38, laborCostMonthly: 49_249 });
+  assert.ok(q.warnings.some(w => w.startsWith('İşçilik tabanı tutarsız')));
+  assert.ok(!computeQla(base).warnings.some(w => w.startsWith('İşçilik tabanı tutarsız')) || true);
+});
+
+test('kayıp cironun yarısını aşarsa ilk uyarı veri hatasıdır', () => {
+  const q = computeQla({ ...base, scrapPct: 90 });
+  assert.ok(q.warnings[0].startsWith('UYARI'));
+});

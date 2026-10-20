@@ -7,12 +7,29 @@ import {
   levelBand, radar, hbars, money, moneyShort, unitOf, Seg, Cell,
 } from './draw';
 import { CRITERIA } from '../../data/criteria';
+import { splitGain } from '../../engine/qla';
 
 const num = (v: any) => Number(String(v ?? '').replace(/\./g, '').replace(',', '.')) || 0;
 const has = (v: any) => num(v) > 0;
 /** Girilen ham değeri Türkçe ondalıkla yazar (7.5 → 7,5) */
 const tr = (v: any) => String(v ?? '').replace(/^(\d+)\.(\d+)$/, '$1,$2');
 const fmtNum = (n: number, d = 1) => n.toLocaleString('tr-TR', { maximumFractionDigits: d });
+/** Sayıya Türkçe iyelik eki: "%7,5" → "%7,5'i", "%11,2" → "%11,2'si", "%10" → "%10'u" (okunuşun son kelimesine göre) */
+const DIGIT_SUFFIX = ['ı', 'i', 'si', 'ü', 'ü', 'i', 'sı', 'si', 'i', 'u'];
+const TENS_SUFFIX: Record<string, string> = { '1': 'u', '2': 'si', '3': 'u', '4': 'ı', '5': 'si', '6': 'ı', '7': 'i', '8': 'i', '9': 'ı' };
+const iyelik = (num: string, ek: 'i' | 'ini' = 'i') => {
+  const digits = num.replace(/[^\d,]/g, '');
+  const [int, dec] = digits.split(',');
+  let base: string;
+  if (dec) base = DIGIT_SUFFIX[Number(dec.slice(-1))];
+  else if (/000$/.test(int)) base = 'i';
+  else if (/00$/.test(int)) base = 'ü';
+  else if (/0$/.test(int) && int.length > 1) base = TENS_SUFFIX[int.slice(-2, -1)] ?? 'ı';
+  else base = DIGIT_SUFFIX[Number(int.slice(-1))];
+  if (ek === 'ini') base = base + 'n' + base.slice(-1);
+  return `${num}'${base}`;
+};
+const pctOf = (n: number, ek: 'i' | 'ini' = 'i') => iyelik(`%${fmtNum(n)}`, ek);
 const fmtDate = (d?: string) => {
   if (!d) return '-';
   const t = new Date(d);
@@ -99,6 +116,7 @@ export class SectionRenderer {
     doc.text('İçindekiler', PAGE.mx, 32);
     const items: [string, string, string][] = [
       ['exec', 'Yönetici özeti', 'Kayıp havuzu · olgunluk · geri ödeme · öncelikli aksiyonlar'],
+      ['case', 'Yönetim için yatırım gerekçesi', 'Kâra etkisi · başa baş · toplantıda savunulacak argümanlar'],
       ['profile', 'Firma profili ve üretim altyapısı', 'Kapasite, ciro ve maliyet yapısı'],
       ['ops', 'Operasyonel veriler', 'KPI gerçekleşenleri ve referans değerler'],
       ['lean', 'Yalın olgunluk değerlendirmesi', '17 kriter · 6 grup · radar'],
@@ -136,13 +154,13 @@ export class SectionRenderer {
     const unit = unitOf(m?.currency || 'TRY');
     pageHeader(c, 'Yönetici özeti');
     const q = m?.qla && m.qla.totalLoss > 0 ? m.qla : undefined;
-    const rec = q?.recommended;
+    const rec = q?.selected;
     const score = m?.maturityScore ?? d.assessment.overallScore ?? 0;
     const lvl = levelOf(score);
     if (q && q.totalLoss > 0 && rec) {
       headline(c, [
         { t: 'Yıllık ' }, { t: `${moneyShort(q.totalLoss, unit)} kayıp`, red: true },
-        { t: ` — cironun %${fmtNum(q.lossPctOfTurnover)}'i. ${rec.def.name} ile yılda ${moneyShort(rec.gainMin, unit)} – ${moneyShort(rec.gainMax, unit)} geri kazanılabilir.` },
+        { t: ` — cironun ${pctOf(q.lossPctOfTurnover)}. ${rec.def.name} ile yılda ${moneyShort(rec.gainMin, unit)} – ${moneyShort(rec.gainMax, unit)} geri kazanılabilir.` },
       ]);
     } else headline(c, [{ t: 'Kayıp hesabı için operasyonel veriler henüz tamamlanmadı.' }]);
 
@@ -157,7 +175,7 @@ export class SectionRenderer {
     setText(c, 10, COLOR.muted);
     if (q) doc.text('/ yıl', L + 7 + bigW, 63);
     if (q) {
-      para(c, `Cironun %${fmtNum(q.lossPctOfTurnover)}'i · ±%20 bant ${moneyShort(q.totalLossMin, unit)} – ${moneyShort(q.totalLossMax, unit)}`, L + 5, 70, LW - 10, 8.4, COLOR.ink);
+      para(c, `Cironun ${pctOf(q.lossPctOfTurnover)} · ±%20 bant ${moneyShort(q.totalLossMin, unit)} – ${moneyShort(q.totalLossMax, unit)}`, L + 5, 70, LW - 10, 8.4, COLOR.ink);
     }
     label(c, `Olgunluk skoru: ${score} / ${MATURITY_MAX} · ${lvl.name}`, L + 5, 81);
     levelBand(c, L + 5, 87, LW - 10, MATURITY_LEVELS, MATURITY_MAX, score);
@@ -200,7 +218,128 @@ export class SectionRenderer {
     });
   }
 
-  // ---------- 4. FİRMA PROFİLİ ----------
+  // ---------- 4. YATIRIM GEREKÇESİ (danışmanın toplantıda önce savunacağı sayfa) ----------
+  static businessCase(c: Ctx, d: ReportData) {
+    const doc = c.doc;
+    const m = d.metrics;
+    const unit = unitOf(m?.currency || 'TRY');
+    pageHeader(c, 'Yatırım gerekçesi');
+    const q = m?.qla && m.qla.totalLoss > 0 ? m.qla : undefined;
+    if (!q || !m) {
+      headline(c, [{ t: 'Yatırım gerekçesi için ciro, maliyet yapısı ve kayıp verileri gereklidir.' }]);
+      return;
+    }
+    const rec = q.selected;
+    const g = splitGain(q, rec);
+    const turnover = m.turnover > 0 ? m.turnover : 0;
+    const margin = m.profitPct && m.profitPct > 0 ? m.profitPct : 0;
+    const upliftPts = turnover > 0 ? g.profit.mid / turnover * 100 : 0;
+    const months = (gain: number) => (gain > 0 ? rec.budget / gain * 12 : 0);
+    const pbProfit = months(g.profit.mid);
+
+    headline(c, margin > 0 && upliftPts > 0 ? [
+      { t: 'Yalın dönüşüm faaliyet kârını yılda ' }, { t: moneyShort(g.profit.mid, unit), red: true },
+      { t: ` doğrudan artırır; kâr marjı %${fmtNum(margin + upliftPts)} olur (bugün %${fmtNum(margin)}).` },
+    ] : [
+      { t: 'Yalın dönüşüm faaliyet kârına yılda ' }, { t: `${moneyShort(g.profit.mid, unit)} doğrudan katkı`, red: true },
+      { t: ` sağlar; toplam beklenen kazanç ${moneyShort(g.total.mid, unit)}.` },
+    ]);
+
+    const L = PAGE.mx, LW = 160, R = L + LW + 5, RW = CW - LW - 5;
+
+    // Sol üst: kazancın üç katmanı
+    card(c, L, 42, LW, 74);
+    label(c, `Kazanç nereden gelir? — ${rec.def.name}, yıllık beklenen`, L + 5, 49);
+    const layers = [
+      { k: g.profit, color: COLOR.red, t: 'Doğrudan kâr etkisi', d: 'Hurda, yeniden işleme, fazla mesai ve duruşların enerji/bakım maliyeti düşer. Gelir tablosuna doğrudan iner.' },
+      { k: g.capacity, color: COLOR.ink, t: 'Kapasite kazancı', d: 'Aynı kadro ve makineyle daha fazla üretim. Satılabildiği ya da ek işe alımı önlediği ölçüde kâra döner.' },
+      { k: g.finance, color: COLOR.good, t: 'Finansman yükü', d: 'Daha az stok: finansman ve depolama maliyeti azalır.' },
+    ];
+    const barX = L + 5, barW = LW - 10, barY = 53;
+    let bx = barX;
+    const tot = layers.reduce((s, x) => s + x.k.mid, 0) || 1;
+    layers.forEach(x => {
+      const w = barW * x.k.mid / tot;
+      if (w > 0) { doc.setFillColor(x.color); doc.rect(bx, barY, w, 4, 'F'); bx += w; }
+    });
+    let ly = 65;
+    layers.forEach(x => {
+      doc.setFillColor(x.color); doc.rect(L + 5, ly - 3, 3, 3, 'F');
+      setText(c, 9, COLOR.ink, true); doc.text(x.t, L + 10, ly);
+      setText(c, 11, COLOR.ink, true); doc.text(moneyShort(x.k.mid, unit), L + LW - 5, ly, { align: 'right' });
+      setText(c, 6.8, COLOR.muted); doc.text(`aralık ${moneyShort(x.k.min, unit)} – ${moneyShort(x.k.max, unit)}`, L + LW - 5, ly + 3.8, { align: 'right' });
+      para(c, x.d, L + 10, ly + 3.8, LW - 60, 7.2, COLOR.muted, 1.3);
+      ly += 13;
+    });
+    if (g.oneTimeCash > 0) {
+      para(c, `Ayrıca stok düşüşüyle bir kerelik ${moneyShort(g.oneTimeCash, unit)} nakit (işletme sermayesi) serbest kalır — yıllık kazanca dahil değildir.`, L + 5, ly + 1, LW - 10, 7.4, COLOR.ink, 1.3, true);
+    }
+
+    // Sol alt-1: kâr marjı (koyu kart)
+    const by = 120, bh = 70, mw = 70;
+    card(c, L, by, mw, bh, COLOR.ink);
+    label(c, 'Kâr marjına etkisi', L + 5, by + 7, '#AFB7C2');
+    if (margin > 0) {
+      setText(c, 20, COLOR.white, true); doc.text(`+${fmtNum(upliftPts)} puan`, L + 5, by + 20);
+      setText(c, 7.6, '#C9CFD8'); doc.text(`faaliyet kâr marjı: bugün %${fmtNum(margin)}, sonra %${fmtNum(margin + upliftPts)}`, L + 5, by + 25.5);
+      const salesEq = g.profit.mid / (margin / 100);
+      setText(c, 14, COLOR.white, true); doc.text(moneyShort(salesEq, unit), L + 5, by + 40);
+      para(c, `Aynı kârı satışla yaratmak için gereken ek ciro. %${fmtNum(margin)} marjda 1 ${unit} tasarruf ≈ ${fmtNum(100 / margin)} ${unit} satış.`, L + 5, by + 45.5, mw - 10, 7.2, '#C9CFD8', 1.3);
+    } else {
+      setText(c, 20, COLOR.white, true); doc.text(moneyShort(g.profit.mid, unit), L + 5, by + 20);
+      para(c, 'yıllık doğrudan kâr katkısı. Maliyet yapısında kâr payı girilirse marj etkisi ve satış eşdeğeri hesaplanır.', L + 5, by + 26, mw - 10, 7.4, '#C9CFD8', 1.3);
+    }
+
+    // Sol alt-2: duyarlılık
+    const sx = L + mw + 4, sw = LW - mw - 4;
+    card(c, sx, by, sw, bh);
+    label(c, 'Kaybın ne kadarı geri kazanılırsa?', sx + 5, by + 7);
+    const rate = (p: number) => {
+      const gain = q.totalLoss * p;
+      const pb = months(gain);
+      return [`%${Math.round(p * 100)}`, moneyShort(gain, unit), pb > 0 ? `${fmtNum(pb)} ay` : '-', moneyShort(gain * q.sustainYears - rec.budget, unit)];
+    };
+    const plan = [`Plan (%${Math.round(rec.def.recovery[0] * 100)}–${Math.round(rec.def.recovery[1] * 100)})`, moneyShort(rec.gainMid, unit), `${fmtNum(rec.paybackExpMonths)} ay`, moneyShort(rec.gainMid * q.sustainYears - rec.budget, unit)];
+    const cw = sw - 10;
+    table(c, [
+      { h: 'Oran', w: cw * 0.3 }, { h: 'Kazanç/yıl', w: cw * 0.24, align: 'right' },
+      { h: 'Ödeme', w: cw * 0.18, align: 'right' }, { h: `${q.sustainYears} yıl net`, w: cw * 0.28, align: 'right' },
+    ], [rate(0.1), rate(0.2), rate(0.3), plan.map(t => ({ t, bold: true }))], sx + 5, by + 14, { size: 7.4 });
+    const bePct = rec.budget / q.totalLoss * 100;
+    para(c, `Başa baş (12 ayda kendini ödemesi) için kaybın ${pctOf(bePct)} yeterli.`, sx + 5, by + bh - 9, sw - 10, 7.4, COLOR.red, 1.3, true);
+
+    // Sağ: toplantıda savunulacak argümanlar
+    label(c, 'Toplantıda öncelikle savunulacak 5 argüman', R, 47);
+    const lo = Math.round(rec.def.recovery[0] * 100), hi = Math.round(rec.def.recovery[1] * 100);
+    const args: [string, string][] = [
+      ['Yatırım kârdan geri döner',
+        pbProfit > 0 && pbProfit <= 24
+          ? `Kapasite ve stok kazancı hiç sayılmasa bile, yalnızca doğrudan kâr etkisiyle ${moneyShort(rec.budget, unit)} bütçe ${fmtNum(pbProfit)} ayda geri döner.`
+          : `Toplam beklenen kazançla ${moneyShort(rec.budget, unit)} bütçe ${fmtNum(rec.paybackExpMonths)} ayda geri döner; doğrudan kâr etkisi yılda ${moneyShort(g.profit.mid, unit)}.`],
+      ['Başa baş için küçük bir iyileşme yeterli',
+        `Programın 12 ayda kendini ödemesi için kaybın yalnızca ${pctOf(bePct, 'ini')} geri kazanmak yeterli. Plan hedefi %${lo}–${hi}.`],
+      margin > 0
+        ? ['Tasarruf, satıştan değerlidir', `%${fmtNum(margin)} kâr marjında maliyetten kazanılan her 1 ${unit}, yaklaşık ${fmtNum(100 / margin)} ${unit} ek satışa eşdeğer — üstelik pazar riski taşımaz.`]
+        : ['Tasarruf, satıştan değerlidir', 'Maliyetten kazanılan her lira doğrudan kâra iner; aynı kârı satışla yaratmak çok daha fazla ciro ve pazar riski gerektirir.'],
+      ['Hedef temkinli, rakamlar abartılı değil',
+        `Kayıp havuzu cironun ${pctOf(q.lossPctOfTurnover)} (sektörde tipik %8–20). Hedef bunun yalnızca ${iyelik(`%${lo}–${hi}`)}; bu aralığın alt ucunda bile geri ödeme ${fmtNum(rec.paybackSlowMonths)} ay.`],
+      ['Ölçülebilir, karar sizde',
+        'İlk iki haftada başlangıç değerleri sizin verinizle doğrulanır; kazanç aylık KPI (hurda, OEE, stok günü, fazla mesai) ile izlenir. Her aşamada devam kararı yönetimdedir.'],
+    ];
+    let ay = 55;
+    args.forEach(([t, s], i) => {
+      doc.setFillColor(COLOR.red);
+      doc.circle(R + 3, ay - 1.2, 3, 'F');
+      setText(c, 7.6, COLOR.white, true); doc.text(String(i + 1), R + 3, ay - 0.1, { align: 'center' });
+      const e = para(c, t, R + 9, ay, RW - 9, 9, COLOR.ink, 1.3, true);
+      ay = para(c, s, R + 9, e + 0.4, RW - 9, 7.6, COLOR.muted, 1.35) + 4.5;
+    });
+    para(c, 'Dayanak: ciro ve maliyet yapısı firma beyanı; kayıp oranları saha tespiti ve işletme verisi; stok taşıma oranı yıllık %' +
+      `${Math.round(q.inventory.carryingRate * 100)}; geri kazanım oranları Gemba proje referansları. Rakamlar yön göstericidir, ilk iki haftada doğrulanır.`,
+      R, Math.max(ay, 176), RW, 6.6, COLOR.muted, 1.3);
+  }
+
+  // ---------- 5. FİRMA PROFİLİ ----------
   static profile(c: Ctx, d: ReportData) {
     const doc = c.doc;
     const op = d.operation;
@@ -210,7 +349,7 @@ export class SectionRenderer {
     const segs: Seg[] = [{ t: `${d.company.companyName || 'Firma'}: ` }];
     if (ciro) segs.push({ t: `${moneyShort(ciro, unit)} yıllık ciro`, red: true });
     if (has(op.operatorsCount)) segs.push({ t: `, ${op.operatorsCount} mavi yaka çalışan` });
-    if (has(op.costPropMaterial)) segs.push({ t: `; maliyetin %${op.costPropMaterial}'i malzeme.` });
+    if (has(op.costPropMaterial)) segs.push({ t: `; maliyetin ${iyelik(`%${tr(op.costPropMaterial)}`)} malzeme.` });
     headline(c, segs);
 
     const v = (x: any, suffix = '') => (has(x) ? `${x}${suffix}` : 'Veri yok');
@@ -393,7 +532,7 @@ export class SectionRenderer {
       headline(c, [{ t: 'Potansiyel kazanım hesabı için kayıp verisi girilmedi.' }]);
       return;
     }
-    const rec = q.recommended;
+    const rec = q.selected;
     const losses = [...q.losses].filter(l => l.amount > 0).sort((a, b) => b.amount - a.amount);
     const top = losses[0];
     headline(c, [
@@ -489,7 +628,7 @@ export class SectionRenderer {
     const doc = c.doc;
     const m = d.metrics;
     const unit = unitOf(m?.currency || 'TRY');
-    const q = m?.qla && m.qla.totalLoss > 0 ? m.qla : undefined, rec = q?.recommended;
+    const q = m?.qla && m.qla.totalLoss > 0 ? m.qla : undefined, rec = q?.selected;
     pageHeader(c, 'Sonuç ve yatırım dönüşü');
     if (rec && rec.gainMid > 0) {
       headline(c, [{ t: 'Sonuç: yatırım ' }, { t: `${fmtNum(rec.paybackExpMonths)} ayda geri dönüyor`, red: true }, { t: `; ${q!.sustainYears} yılda ${moneyShort(rec.cumulativeGain, unit)} kazanç.` }]);
@@ -521,7 +660,7 @@ export class SectionRenderer {
     const text = (q
       ? `Bir günlük Gemba saha turu ve operasyonel veriler ışığında, ${firma} bünyesinde yıllık ${moneyShort(q.totalLoss, unit)} kayıp havuzu ve buna bağlı önemli bir kârlılık potansiyeli tespit edilmiştir. `
       : `${firma} için saha turu gerçekleştirilmiştir; kayıp hesabı için operasyonel veriler henüz tamamlanmamıştır. `) + maturityText +
-      (rec ? ` Önerilen ${rec.def.name} ile ilk yıl ${moneyShort(rec.year1Gain, unit)} geri kazanım hedeflenmektedir; kazanımlar ürün grubu üretimde kaldıkça sürdürülebilirdir.` : '') +
+      (rec ? ` ${rec.recommended ? "Önerilen" : "Seçilen"} ${rec.def.name} ile ilk yıl ${moneyShort(rec.year1Gain, unit)} geri kazanım hedeflenmektedir; kazanımlar ürün grubu üretimde kaldıkça sürdürülebilirdir.` : '') +
       ' İlk adım olarak verilerin firma ile birlikte doğrulanması ve en büyük kayıp kaleminde pilot çalışma başlatılması önerilir.';
     para(c, text, R, 54, RW, 9, COLOR.ink, 1.5);
 

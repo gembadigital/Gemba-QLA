@@ -56,7 +56,7 @@ export function buildAnalysisText(op: OperationData, comp: Company, m?: ReportMe
     const acts = losses.map(l => ACTION_BY_LOSS[l.key]).filter(Boolean);
     analysis.quickWins = acts.slice(0, 3).map(a => `${a.act}: ${a.desc}`);
     analysis.mediumTermProjects = [
-      `${q.recommended.def.name} (${q.recommended.def.days} adam-gün) kapsamında pilot alanda ${q.recommended.def.focus.toLocaleLowerCase('tr-TR')} çalışmaları.`,
+      `${q.selected.def.name} (${q.selected.def.days} adam-gün) kapsamında pilot alanda ${q.selected.def.focus.toLocaleLowerCase('tr-TR')} çalışmaları.`,
       ...acts.slice(3, 5).map(a => `${a.act}: ${a.desc}`),
     ];
     analysis.longTermProjects = [

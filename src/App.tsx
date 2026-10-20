@@ -337,6 +337,7 @@ export default function App() {
       setBreakdownPct(details.operation.breakdownPct || '');
       setPlanRealizationPct(details.operation.planRealizationPct || '');
       setSustainYears(Number(details.operation.sustainYears) || 3);
+      setSelectedPackageId(details.operation.selectedPackageId || undefined);
       setOee(details.operation.oee ?? '');
       setCoveredArea(details.operation.coveredArea ?? '');
       setOperatorsCount(details.operation.operatorsCount ?? '');
@@ -370,6 +371,7 @@ export default function App() {
       setTalepEdilenHizmet('Yalın Dönüşüm Proje Danışmanlığı');
       setScores({});
       setChatMessages([]);
+      setSelectedPackageId(undefined);
     }
     
     if (details.assessment) {
@@ -969,7 +971,8 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
 
   const recommendedDays = currentProgram.op1.ag;
   // Olgunluk skoru değişip yeni paket önerildiğinde seçim önerilene döner
-  useEffect(() => { setSelectedPackageId(undefined); }, [recommendedDays]);
+  // Olgunluk skoru değişip öneri değişirse seçim sıfırlanır — firma yüklenirken kayıtlı seçim korunur
+  useEffect(() => { if (!isSwappingCompany.current) setSelectedPackageId(undefined); }, [recommendedDays]);
   const qlaInput: QlaInput = {
     turnover: currentCostTurnoverBase,
     costPct: costPctInput,
@@ -1369,6 +1372,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
         breakdownPct,
         planRealizationPct,
         sustainYears: String(sustainYears),
+        selectedPackageId: selectedPackageId ?? '',
         oee,
         coveredArea,
         operatorsCount,
@@ -1546,6 +1550,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
         qla,
         currency,
         turnover: currentCostTurnoverBase,
+        profitPct: parseFloat(String(costPropProfit).replace(',', '.')) || 0,
         maturityScore: totalScore,
         answeredCount,
         findings: getDynamicGembaFindings().map((f: any) => ({ no: f.no, score: f.score ?? 0, title: f.title, obs: f.obs, finImpact: f.finImpact, leanTool: f.leanTool })),

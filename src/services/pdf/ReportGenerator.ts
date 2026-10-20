@@ -50,6 +50,7 @@ export class ReportGenerator {
     SectionRenderer.cover(c, data, reportNo);
     next(); // içindekiler — sayfa numaraları belli olunca çizilir
     section('exec', () => SectionRenderer.executive(c, data));
+    section('case', () => SectionRenderer.businessCase(c, data));
     section('profile', () => SectionRenderer.profile(c, data));
     section('ops', () => SectionRenderer.operations(c, data));
     section('lean', () => SectionRenderer.lean(c, data));

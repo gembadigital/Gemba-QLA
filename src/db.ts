@@ -28,6 +28,8 @@ export interface Assessment {
 export interface OperationData {
   companyId: string;
   currency?: string;
+  /** Danışmanın ROI için seçtiği paket ('' = sistemin önerisi) */
+  selectedPackageId?: string;
   // Field values
   setupMachineCount: string;
   annualVolume: string;
@@ -783,6 +785,7 @@ export const GembaDB = {
         breakdownPct: operationFields.breakdownPct ?? existingOp?.breakdownPct ?? '',
         planRealizationPct: operationFields.planRealizationPct ?? existingOp?.planRealizationPct ?? '',
         sustainYears: operationFields.sustainYears ?? existingOp?.sustainYears ?? '3',
+        selectedPackageId: operationFields.selectedPackageId ?? existingOp?.selectedPackageId ?? '',
         oee: operationFields.oee ?? existingOp?.oee ?? '',
         coveredArea: operationFields.coveredArea ?? existingOp?.coveredArea ?? '',
         operatorsCount: operationFields.operatorsCount ?? existingOp?.operatorsCount ?? '',

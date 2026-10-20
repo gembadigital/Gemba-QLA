@@ -541,6 +541,46 @@ export function computeQla(input: QlaInput): QlaResult {
   };
 }
 
+/** Kazancın finansal katmanları — yönetici (CFO) bakışı:
+ *  - profit: doğrudan faaliyet kârına iner (hurda, rework, fazla mesai, duruşların enerji/bakım payı)
+ *  - capacity: açılan kapasite ve işgücü verimi; ancak satılır ya da ek işe alım önlenirse kâra döner
+ *  - finance: stok taşıma maliyeti (finansman, depolama); ayrıca bir kerelik nakit serbest kalır
+ *  Kalem payları qla.opportunities'ten (kazanç dağılımı) alınır, paketin aralığına ölçeklenir. */
+export interface GainLayer { min: number; mid: number; max: number }
+export interface GainSplit {
+  profit: GainLayer;
+  capacity: GainLayer;
+  finance: GainLayer;
+  oneTimeCash: number;
+  total: GainLayer;
+}
+
+export function splitGain(q: QlaResult, pkg: PackageResult = q.recommended): GainSplit {
+  const base = q.opportunities.reduce((acc, o) => acc + o.gainMin + o.gainMax, 0);
+  const layers = { profit: 0, capacity: 0, finance: 0 };
+  if (base > 0) {
+    q.opportunities.forEach(o => {
+      const share = (o.gainMin + o.gainMax) / base;
+      if (o.key === 'stok') layers.finance += share;
+      else if (o.key === 'iscilik') layers.capacity += share;
+      else {
+        const cap = q.capacityLines.find(cl => cl.key === o.key);
+        const capFrac = cap && o.loss > 0 ? Math.min(1, cap.inPool / o.loss) : 0;
+        layers.capacity += share * capFrac;
+        layers.profit += share * (1 - capFrac);
+      }
+    });
+  }
+  const layer = (f: number): GainLayer => ({ min: r(pkg.gainMin * f), mid: r(pkg.gainMid * f), max: r(pkg.gainMax * f) });
+  return {
+    profit: layer(layers.profit),
+    capacity: layer(layers.capacity),
+    finance: layer(layers.finance),
+    oneTimeCash: pkg.cashRelease,
+    total: { min: pkg.gainMin, mid: pkg.gainMid, max: pkg.gainMax },
+  };
+}
+
 /** 12 aylık kümülatif tasarruf eğrisi; ilk 4 ayda kademeli devreye alma. Başa baş 36 aya kadar aranır. */
 export function breakEvenCurve(budget: number, annualGain: number) {
   const monthlyGain = annualGain / 12;

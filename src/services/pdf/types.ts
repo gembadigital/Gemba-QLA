@@ -6,6 +6,8 @@ export interface ReportMetrics {
   qla: QlaResult;
   currency: string;
   turnover: number;
+  /** Maliyet yapısındaki kâr payı (% ciro); 0 = bilinmiyor */
+  profitPct?: number;
   maturityScore: number;
   answeredCount: number;
   /** Olgunluk değerlendirmesinden çıkan, en zayıf kriterlere ait bulgular */

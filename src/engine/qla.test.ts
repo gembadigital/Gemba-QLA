@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeQla, QlaInput, normalizeTr } from './qla.ts';
+import { computeQla, QlaInput, normalizeTr, splitGain } from './qla.ts';
 
 const base: QlaInput = {
   turnover: 500_000_000,
@@ -202,4 +202,13 @@ test('işçilik oranı ile kişi × maliyet çok farklıysa uyarı verilir', () 
 test('kayıp cironun yarısını aşarsa ilk uyarı veri hatasıdır', () => {
   const q = computeQla({ ...base, scrapPct: 90 });
   assert.ok(q.warnings[0].startsWith('UYARI'));
+});
+
+test('kazanç katmanları toplamı paket kazancına eşittir; stok finansman katmanındadır', () => {
+  const q = computeQla({ ...base, stockValue: 20_000_000, planRealizationPct: 80, setupTimePct: 8, breakdownPct: 5 } as QlaInput);
+  const g = splitGain(q);
+  const sum = g.profit.mid + g.capacity.mid + g.finance.mid;
+  assert.ok(Math.abs(sum - q.recommended.gainMid) <= 3, `${sum} ≠ ${q.recommended.gainMid}`);
+  assert.ok(g.finance.mid > 0 && g.profit.mid > 0 && g.capacity.mid > 0);
+  assert.equal(g.oneTimeCash, q.recommended.cashRelease);
 });

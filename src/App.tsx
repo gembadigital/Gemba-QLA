@@ -281,6 +281,13 @@ export default function App() {
   // Açılışta true: firma verisi buluttan/yerelden yüklenene kadar otomatik kaydetme ÇALIŞMAZ.
   // (Aksi halde ilk render'daki boş state, son açık firmanın kaydının üzerine yazılıyordu.)
   const isSwappingCompany = useRef(true);
+  // Otomatik kayıt yalnızca kullanıcı bir alanı değiştirdiğinde çalışır: yüklenen/son kaydedilen
+  // veri imzası tutulur, kur yenilemesi gibi tetiklemeler kayda dönüşmez.
+  const lastSavedSig = useRef<string | null>(null);
+  const currentSigRef = useRef<string>('');
+  // Kaydın buluttaki son güncellenme zamanı (yüklerken / kendi kaydımızda). Bulutta daha yenisi
+  // varsa başka bir cihaz/sekme kaydetmiş demektir — üzerine yazılmaz, kayıt yeniden yüklenir.
+  const cloudStamp = useRef<number>(0);
 
   // Load Company from database function with Cloud Sync
   const loadCompany = async (companyId: string) => {
@@ -288,6 +295,7 @@ export default function App() {
     try {
       await GembaDB.syncCompanyDetailsFromCloud(companyId);
     } catch (e) {}
+    cloudStamp.current = (await GembaDB.getCloudUpdatedAt(companyId)) ?? 0;
 
     const details = GembaDB.getCompanyDetails(companyId);
     if (!details) {
@@ -372,6 +380,8 @@ export default function App() {
     localStorage.setItem('gp_currentCompanyId', companyId);
 
     setTimeout(() => {
+      // Yüklenen veri = kayıtlı veri; ilk kullanıcı değişikliğine kadar kayıt yapılmaz
+      lastSavedSig.current = currentSigRef.current;
       isSwappingCompany.current = false;
     }, 400);
   };
@@ -1327,26 +1337,15 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
   const [saveToast, setSaveToast] = useState<string | null>(null);
 
   // ─── RELATIONAL DATABASE AUTOSAVE & MANUAL SAVE HOOK ─────────────────────
-  const performSave = async () => {
-    if (!currentCompanyId || isSwappingCompany.current) return;
-    // Firma adı boşsa veri henüz yüklenmemiştir — boş ekran mevcut kaydın üzerine yazılmasın
-    if (!firmaAdi.trim()) return;
-
-    const activeRate = currency === 'EUR' ? (eurTry || 37.65) : currency === 'USD' ? (usdTry || 34.80) : 1;
-    // Kayıtlar önerilen paket üzerinden, TL karşılığıyla tutulur
-    const potentialSavingTL = Math.round((qla.recommended.gainMax || 0) * activeRate);
-
-    // Save relational state to GembaDB
-    await GembaDB.saveFullState(
-      currentCompanyId,
-      {
+  const buildSaveFields = () => {
+    const companyFields = {
         companyName: firmaAdi,
         sector: sektor,
         location: adres,
         consultant: consultant,
         visitDate: tarih,
-      },
-      {
+      };
+    const operationFields = {
         currency,
         urunGrubu,
         calisanSayisi,
@@ -1392,7 +1391,41 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
         costPropProfit,
         scores,
         chatMessages,
-      },
+      };
+    return { companyFields, operationFields };
+  };
+  currentSigRef.current = JSON.stringify({ ...buildSaveFields(), notlar });
+
+  const performSave = async (manual = false) => {
+    if (!currentCompanyId || isSwappingCompany.current) return;
+    // Firma adı boşsa veri henüz yüklenmemiştir — boş ekran mevcut kaydın üzerine yazılmasın
+    if (!firmaAdi.trim()) return;
+
+    const { companyFields, operationFields } = buildSaveFields();
+    const sig = JSON.stringify({ companyFields, operationFields, notlar });
+    // Kullanıcı hiçbir alanı değiştirmediyse (ör. sadece döviz kuru yenilendi) kaydetme
+    if (!manual && sig === lastSavedSig.current) return;
+
+    // Bu kayıt yüklendikten sonra başka bir cihaz/sekme kaydettiyse üzerine yazma, güncelini yükle
+    const remoteStamp = await GembaDB.getCloudUpdatedAt(currentCompanyId);
+    if (isSwappingCompany.current) return;
+    if (remoteStamp && remoteStamp > cloudStamp.current + 1000) {
+      setSaveToast('⚠️ Bu firma başka bir cihazda/sekmede güncellenmiş — güncel veri yüklendi, değişikliğiniz kaydedilmedi.');
+      setTimeout(() => setSaveToast(null), 6000);
+      await loadCompany(currentCompanyId);
+      return;
+    }
+
+    const activeRate = currency === 'EUR' ? (eurTry || 37.65) : currency === 'USD' ? (usdTry || 34.80) : 1;
+    // Kayıtlar önerilen paket üzerinden, TL karşılığıyla tutulur
+    const potentialSavingTL = Math.round((qla.recommended.gainMax || 0) * activeRate);
+
+    // Save relational state to GembaDB
+    lastSavedSig.current = sig;
+    cloudStamp.current = GembaDB.saveFullState(
+      currentCompanyId,
+      companyFields,
+      operationFields,
       {
         overallScore: totalScore,
         potentialSaving: potentialSavingTL,
@@ -1424,13 +1457,14 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
   };
 
   const handleManualSave = async () => {
-    await performSave();
+    await performSave(true);
     setSaveToast('✅ Tüm Finansal Veriler ve Kayıp Analizi Buluta Kaydedildi!');
     setTimeout(() => setSaveToast(null), 3500);
   };
 
   useEffect(() => {
-    performSave();
+    const t = setTimeout(() => { performSave(); }, 800);
+    return () => clearTimeout(t);
   }, [
     currentCompanyId, firmaAdi, sektor, adres, urunGrubu, calisanSayisi, vardiya, gorusulen, tarih, talepEdilenHizmet, notlar,
     activeTab, currency, setupMachineCount, annualVolume, productionUnit, turnoverLira, plannedEfficiency, actualEfficiency, copqRate, scrapRate, reworkRate, overtimeRate, leadTime, stockUnits, stockValue, setupTimePct, breakdownPct, planRealizationPct, sustainYears, oee,

@@ -719,15 +719,33 @@ export const GembaDB = {
     return newCompany;
   },
 
-  // Save full state of loaded company (Local + Supabase Cloud)
+  // Firmanın buluttaki son güncellenme zamanı (ms); bulut yoksa / okunamazsa null
+  async getCloudUpdatedAt(companyId: string): Promise<number | null> {
+    const client = getSupabase();
+    if (!client || !companyId) return null;
+    try {
+      const { data, error } = await client
+        .from('companies')
+        .select('updated_at')
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (error || !data?.updated_at) return null;
+      const t = Date.parse(data.updated_at);
+      return Number.isFinite(t) ? t : null;
+    } catch {
+      return null;
+    }
+  },
+
+  // Save full state of loaded company (Local + Supabase Cloud). Yazılan updated_at zamanını (ms) döner.
   saveFullState(
     companyId: string,
     companyFields: Partial<Company>,
     operationFields: Partial<OperationData>,
     assessmentFields: Partial<Assessment>
-  ) {
+  ): number {
+    const now = new Date().toISOString();
     try {
-      const now = new Date().toISOString();
 
       // 1. Company
       const companies = this.getCompanies(true);
@@ -827,11 +845,13 @@ export const GembaDB = {
 
       // 4. Cloud Sync to Supabase
       const client = getSupabase();
-      if (client) {
+      const companyName = companyFields.companyName || (cIdx > -1 ? companies[cIdx].companyName : '');
+      // Firma adı bilinmiyorsa (veri yüklenmemiş) buluttaki kayda hiç dokunma
+      if (client && companyName.trim()) {
         // Company
         client.from('companies').upsert({
           company_id: companyId,
-          company_name: companyFields.companyName || (cIdx > -1 ? companies[cIdx].companyName : 'Saha Çalışması'),
+          company_name: companyName,
           sector: companyFields.sector || (cIdx > -1 ? companies[cIdx].sector : 'Genel İmalat'),
           location: companyFields.location || (cIdx > -1 ? companies[cIdx].location : ''),
           consultant: companyFields.consultant || (cIdx > -1 ? companies[cIdx].consultant : ''),
@@ -878,6 +898,7 @@ export const GembaDB = {
     } catch (e) {
       console.error('Error saving full state', e);
     }
+    return Date.parse(now);
   },
 
   // Delete company completely (Local + Cloud)

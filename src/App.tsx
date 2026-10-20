@@ -861,7 +861,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
       }
     } catch (err: any) {
       console.error(err);
-      setChatMessages(prev => [...prev, { role: 'assistant', content: `Bağlantı hatası: Gemini API asistanına ulaşılamadı. Lütfen internet bağlantısını ve sunucu durumunu kontrol edin.` }]);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `Bağlantı hatası: AI asistanına ulaşılamadı. Lütfen internet bağlantısını ve sunucu durumunu kontrol edin.` }]);
     } finally {
       setIsChatLoading(false);
     }

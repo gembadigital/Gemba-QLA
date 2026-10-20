@@ -1502,7 +1502,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
 
       </div>
 
-      {/* Bottom Row - Full width: Section 6 Gemini AI & Quick actions */}
+      {/* Bottom Row - Full width: Section 6 AI asistanı & Quick actions */}
       <div className="space-y-8 animate-fade-in">
         {/* ─── SECTION 6: AI INTERACTIVE MODELLING ─── */}
         <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 space-y-4 shadow-sm relative overflow-hidden">
@@ -1539,7 +1539,7 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
               </div>
             </div>
 
-            {/* Gemini AI Interactive Q&A Chat Window */}
+            {/* AI asistanı Q&A sohbet penceresi */}
             <div className="border border-slate-200 rounded-2xl bg-white overflow-hidden shadow-inner flex flex-col no-print">
               <div className="bg-slate-900 text-white px-3.5 py-2.5 text-[10.5px] font-extrabold flex justify-between items-center border-b border-slate-800">
                 <span className="flex items-center gap-2">

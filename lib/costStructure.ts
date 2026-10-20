@@ -1,8 +1,9 @@
 // ─── SEKTÖR MALİYET YAPISI ÖNERİSİ (web araştırmalı) ─────────────────────────
-// Gemini + Google Search ile, verilen sektör/ürün grubu için ciroya oranla tipik
+// Claude + web arama aracı ile, verilen sektör/ürün grubu için ciroya oranla tipik
 // maliyet kırılımını araştırır. Sonuç bir ÖNERİDİR: danışman onaylamadan uygulanmaz.
 import type { Express } from "express";
-import { GoogleGenAI } from "@google/genai";
+import type Anthropic from "@anthropic-ai/sdk";
+import { getClaude, createMessage, textOf, friendlyClaudeError } from "./claude.js";
 
 export interface CostRange { min: number; max: number; ort: number }
 export interface CostSuggestion {
@@ -19,11 +20,8 @@ export interface CostSuggestion {
 
 const KEYS = ["malzeme", "iscilik", "enerji", "bakim", "genel", "kar"] as const;
 
-const researchPrompt = (sector: string, product: string) =>
-  `Türkiye'de "${sector}" sektöründe${product ? ` "${product}" üreten` : ""} imalat firmalarının maliyet yapısını web'de araştır: hammadde/malzeme, direkt işçilik, enerji, bakım, genel üretim giderleri ve faaliyet kârının ciroya oranı (%). Sektör raporları, PAGEV/TAYSAD/İSO gibi dernek verileri, KAP'taki şirket mali tabloları kullan. Bulduğun oranları kaynaklarıyla birlikte kısa maddeler halinde özetle.`;
-
 const buildPrompt = (sector: string, product: string) => `Türkiye'de "${sector}" sektöründe${product ? ` "${product}" ürün grubu üreten` : ""} imalat firmalarının tipik maliyet yapısını, CİROYA ORAN (%) olarak araştır.
-Önce Google Search ile en az 3 farklı güncel kaynak ara; kaynak olarak sektör raporları, TÜİK / Sanayi Bakanlığı verileri, sektör dernekleri, halka açık şirketlerin (KAP) mali tabloları ve akademik çalışmaları kullan.
+Önce web araması yaparak en az 3 farklı güncel kaynak bul; kaynak olarak sektör raporları, TÜİK / Sanayi Bakanlığı verileri, sektör dernekleri, halka açık şirketlerin (KAP) mali tabloları ve akademik çalışmaları kullan.
 
 Kalemler (toplamları yaklaşık %100 olmalı):
 - malzeme: direkt hammadde + yardımcı malzeme
@@ -33,7 +31,7 @@ Kalemler (toplamları yaklaşık %100 olmalı):
 - genel: diğer genel üretim giderleri (amortisman, kira, endirekt)
 - kar: faaliyet kârı
 
-Her kalem için min, max ve ort (önerilen ortalama) ver. Yalnızca aşağıdaki JSON'u döndür, başka metin ekleme:
+Her kalem için min, max ve ort (önerilen ortalama) ver. Araştırmayı bitirdikten sonra yanıtının sonunda yalnızca aşağıdaki JSON'u ver:
 \`\`\`json
 {"sektor":"...","malzeme":{"min":0,"max":0,"ort":0},"iscilik":{"min":0,"max":0,"ort":0},"enerji":{"min":0,"max":0,"ort":0},"bakim":{"min":0,"max":0,"ort":0},"genel":{"min":0,"max":0,"ort":0},"kar":{"min":0,"max":0,"ort":0},"aciklama":"1-2 cümle: hangi kaynaklara dayandığı ve sektöre özgü notlar"}
 \`\`\``;
@@ -58,47 +56,41 @@ export function parseSuggestion(text: string): Omit<CostSuggestion, "kaynaklar">
   return out;
 }
 
-export function registerCostStructureRoute(app: Express, getApiKey: () => string | undefined) {
+/** Web arama sonuç bloklarından kaynak listesini çıkarır (tekilleştirilmiş) */
+export function sourcesOf(content: Anthropic.Beta.BetaContentBlock[]): { title: string; url: string }[] {
+  const out: { title: string; url: string }[] = [];
+  for (const block of content) {
+    if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
+    for (const r of block.content) {
+      if (r.type === "web_search_result" && !out.some(o => o.url === r.url)) out.push({ title: r.title || r.url, url: r.url });
+    }
+  }
+  return out.slice(0, 6);
+}
+
+export function registerCostStructureRoute(app: Express) {
   app.post("/api/cost-structure", async (req, res) => {
     const sector = String(req.body?.sector || "").trim();
     const product = String(req.body?.product || "").trim();
     if (!sector) return res.status(400).json({ error: "Sektör gerekli." });
 
-    const apiKey = getApiKey();
-    if (!apiKey) return res.status(503).json({ error: "GEMINI_API_KEY tanımlı değil." });
+    const client = getClaude();
+    if (!client) return res.status(503).json({ error: "Claude API anahtarı henüz eklenmedi" });
 
-    const ai = new GoogleGenAI({ apiKey });
-    const models = ["gemini-3.8-flash", "gemini-flash-latest"];
-    let lastErr: any;
-    for (const model of models) {
-      try {
-        // 1) Web araştırması (Google Search grounding) → kaynaklı özet
-        const research = await ai.models.generateContent({
-          model,
-          contents: researchPrompt(sector, product),
-          config: { tools: [{ googleSearch: {} }] },
-        });
-        // 2) Özeti yapılandırılmış orana çevir (araç yok, deterministik)
-        const response = await ai.models.generateContent({
-          model,
-          contents: `Aşağıdaki araştırma özetine dayanarak:\n\n${research.text || ""}\n\n${buildPrompt(sector, product)}`,
-          config: { temperature: 0.1 },
-        });
-        const parsed = parseSuggestion(response.text || "");
-        const chunks: any[] = (research as any).candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-        const kaynaklar = chunks
-          .map(c => c.web)
-          .filter((w: any) => w?.uri)
-          .filter((w: any, i: number, arr: any[]) => arr.findIndex(x => x.title === w.title) === i)
-          .slice(0, 6)
-          .map((w: any) => ({ title: String(w.title || w.uri), url: String(w.uri) }));
-        const result: CostSuggestion = { ...parsed, kaynaklar };
-        return res.json(result);
-      } catch (err: any) {
-        lastErr = err;
-        console.warn(`[cost-structure] ${model} başarısız:`, err?.message || err);
-      }
+    try {
+      const response = await createMessage(client, {
+        max_tokens: 16000,
+        // Basit araştırma + çıkarım: düşük effort sunucusuz fonksiyon süresine sığar
+        output_config: { effort: "low" },
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
+        messages: [{ role: "user", content: buildPrompt(sector, product) }],
+      });
+      const parsed = parseSuggestion(textOf(response));
+      const result: CostSuggestion = { ...parsed, kaynaklar: sourcesOf(response.content) };
+      return res.json(result);
+    } catch (err) {
+      console.warn("[cost-structure] başarısız:", err);
+      return res.status(502).json({ error: friendlyClaudeError(err) });
     }
-    return res.status(502).json({ error: `Web araştırması başarısız: ${lastErr?.message || "bilinmeyen hata"}` });
   });
 }

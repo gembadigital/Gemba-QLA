@@ -1,5 +1,5 @@
 import express from "express";
-import { GoogleGenAI } from "@google/genai";
+import { getClaude, createMessage, textOf, friendlyClaudeError } from "../lib/claude.js";
 import dotenv from "dotenv";
 import { registerCostStructureRoute } from "../lib/costStructure.js";
 
@@ -7,37 +7,18 @@ dotenv.config();
 
 const app = express();
 app.use(express.json());
-registerCostStructureRoute(app, () => process.env.GEMINI_API_KEY);
+registerCostStructureRoute(app);
 
-// Helper for calling Gemini with retry and fallback across multiple models
-async function callGeminiDynamic(ai: GoogleGenAI, systemInstruction: string, contents: any[]): Promise<string> {
-  const models = ["gemini-3.8-flash", "gemini-flash-latest"];
-  let lastError: any = null;
-
-  for (const model of models) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model: model,
-          contents: contents,
-          config: {
-            systemInstruction: systemInstruction,
-            temperature: 0.1,
-          },
-        });
-        if (response && response.text) {
-          return response.text;
-        }
-      } catch (err: any) {
-        lastError = err;
-        await new Promise((resolve) => setTimeout(resolve, 150));
-      }
-    }
-  }
-  throw lastError || new Error("All tried models and attempts failed.");
+/** UI sohbet geçmişini Claude mesaj biçimine çevirir: ilk mesaj kullanıcı olmalı, boş mesajlar atılır */
+function toClaudeMessages(messages: any[]): { role: "user" | "assistant"; content: string }[] {
+  const mapped = messages
+    .filter((m: any) => typeof m?.content === "string" && m.content.trim())
+    .map((m: any) => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content }));
+  while (mapped.length && mapped[0].role !== "user") mapped.shift();
+  return mapped;
 }
 
-// API Route for Gemini Chat Q&A Interaction
+// Sohbet rotası (yol adı istemci uyumluluğu için korunuyor; arka uç Claude)
 app.post("/api/gemini/chat", async (req, res) => {
   try {
     const {
@@ -64,18 +45,10 @@ app.post("/api/gemini/chat", async (req, res) => {
       lastUserMessage.toLowerCase().includes("hesapla") ||
       messages.length <= 2;
 
-    const apiKey = process.env.GEMINI_API_KEY || ["AQ.", "Ab8RN6Jdiw7blFpKQ2m9Pe-K6K3-1Wuqar6lOSUtqt1tbgr1HA"].join("");
-    if (apiKey) {
+    // 1. Claude (ANTHROPIC_API_KEY tanımlıysa); değilse aşağıdaki hazır yanıtlara düşülür
+    const client = getClaude();
+    if (client) {
       try {
-        const ai = new GoogleGenAI({
-          apiKey: apiKey,
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
-            }
-          }
-        });
-
         const systemInstruction = `GEMBA AI SALES COACH – SYSTEM ROLE & CONVERSATIONAL BUSINESS LOGIC
 
 Sen, Gemba Partner'ın kıdemli OPEX Sales Director, Cost Control Advisor ve Operational Excellence Coach rolündeki yapay zeka danışmanı ve satış kapanış koçusun (Gemba AI Sales Coach).
@@ -177,15 +150,19 @@ EXECUTIVE SALES INSIGHT
 9. RECOMMENDED NEXT STEP
 - [Müşterinin sözleşmeyi imzalamasını kolaylaştıracak tek bir sonraki adım önerisi]`;
 
-        const contentsFormat = messages.map((m: any) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }]
-        }));
-
-        const responseText = await callGeminiDynamic(ai, systemInstruction, contentsFormat);
-        return res.json({ response: responseText });
-      } catch (apiError: any) {
-        console.warn("[Vercel API Route] Gemini API calls failed, launching fallback:", apiError);
+        const history = toClaudeMessages(messages);
+        if (history.length) {
+          const response = await createMessage(client, {
+            max_tokens: 16000,
+            output_config: { effort: "low" },
+            system: systemInstruction,
+            messages: history,
+          });
+          const responseText = textOf(response);
+          if (responseText) return res.json({ response: responseText });
+        }
+      } catch (apiError) {
+        console.warn("[Chat] Claude çağrısı başarısız, hazır yanıta düşülüyor:", friendlyClaudeError(apiError));
       }
     }
 

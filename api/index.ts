@@ -27,7 +27,7 @@ app.post("/api/gemini/chat", async (req, res) => {
       urunGrubu = "Metal ve Plastik Şekillendirme",
       turnoverLira = "150.000.000",
       copqRate = "10.0",
-      oee = "58",
+      oee = "",
       currency = "TRY",
       currencySymbol = "₺"
     } = req.body;
@@ -76,7 +76,7 @@ MÜŞTERİ / FABRİKA VERİ SETİ:
 - Sektör / Odak Ürün Grubu: ${sector} / ${urunGrubu}
 - Yıllık Ciro: ${currencySymbol} ${turnoverLira}
 - COPQ Oranı: %${copqRate}
-- Mevcut OEE: %${oee}
+- Mevcut OEE: ${oee ? `%${oee}` : "ölçülmüyor (OEE verisi yok; OEE varsayımı yapma)"}
 - Para Birimi: ${currency} (${currencySymbol})
 
 RAPOR OLUŞTURMA İSTEKLERİ İÇİN ZORUNLU 9 BAŞLIKLI FORMAT:

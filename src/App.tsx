@@ -354,7 +354,9 @@ export default function App() {
   const [notlar, setNotlar] = useState(() => localStorage.getItem('gp_notlar') || '');
   const [activeTab, setActiveTab] = useState<'scoring' | 'financial' | 'roi'>(() => (localStorage.getItem('gp_activeTab') as 'scoring' | 'financial' | 'roi') || 'scoring');
   
-  const isSwappingCompany = useRef(false);
+  // Açılışta true: firma verisi buluttan/yerelden yüklenene kadar otomatik kaydetme ÇALIŞMAZ.
+  // (Aksi halde ilk render'daki boş state, son açık firmanın kaydının üzerine yazılıyordu.)
+  const isSwappingCompany = useRef(true);
 
   // Load Company from database function with Cloud Sync
   const loadCompany = async (companyId: string) => {
@@ -1334,6 +1336,8 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
   };
 
   const runDemoFill = () => {
+    // Demo veriler açık firmanın kaydının üzerine yazılır — gerçek firmada yanlışlıkla basılmasın
+    if (!window.confirm(`Örnek (demo) veriler "${firmaAdi || 'bu firma'}" kaydının üzerine yazılacak: ciro, OEE, hurda, puanlar vb. değişir. Devam edilsin mi?`)) return;
     setFirmaAdi("Akar Otomotiv A.Ş.");
     setSektor("Otomotiv Yan Sanayi");
     setAdres("Bursa / NOSAB");
@@ -1395,6 +1399,8 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
   // ─── RELATIONAL DATABASE AUTOSAVE & MANUAL SAVE HOOK ─────────────────────
   const performSave = async () => {
     if (!currentCompanyId || isSwappingCompany.current) return;
+    // Firma adı boşsa veri henüz yüklenmemiştir — boş ekran mevcut kaydın üzerine yazılmasın
+    if (!firmaAdi.trim()) return;
 
     const activeRate = currency === 'EUR' ? (eurTry || 37.65) : currency === 'USD' ? (usdTry || 34.80) : 1;
     // Kayıtlar önerilen paket üzerinden, TL karşılığıyla tutulur
@@ -3737,7 +3743,7 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
                   </div>
                   <div className="bg-rose-500/5 border border-rose-200/50 rounded-2xl p-4 space-y-2 text-xs text-rose-950 font-semibold leading-relaxed">
                     <p>
-                      Mevcut gemba gözlem parametreleriniz, ciro büyüklüğünüz ve operasyonel verileriniz (OEE: %{oeeNum}, hurda: %{scrapRateNum}) doğrultusunda saptanan yıllık gizli ve açık toplam israf havuzu:
+                      Mevcut gemba gözlem parametreleriniz, ciro büyüklüğünüz ve operasyonel verileriniz (OEE: {oeeNum ? `%${oeeNum}` : 'ölçülmüyor'}, hurda: {scrapRateNum ? `%${scrapRateNum}` : 'veri yok'}) doğrultusunda saptanan yıllık gizli ve açık toplam israf havuzu:
                     </p>
                     <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-rose-150 shadow-sm">
                       <span className="font-extrabold text-rose-900 uppercase tracking-wider">TOPLAM YILLIK KAYIP HAVUZU:</span>

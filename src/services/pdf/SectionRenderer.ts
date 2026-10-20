@@ -427,27 +427,22 @@ Yalın dönüşüm araçlarının (SMED, 5S, TPM Otonom Bakım ve Poka-Yoke) ent
         { header: 'Gerçekleşen (Fiili)', width: 50, align: 'center' }
       ];
 
-      const pEff = data.operation.plannedEfficiency || '85';
-      const aEff = data.operation.actualEfficiency || '62';
-      const copq = data.operation.copqRate || '10.0';
-      const scrap = data.operation.scrapRate || '1.8';
-      const rework = data.operation.reworkRate || '2.7';
-      const overtime = data.operation.overtimeRate || '8.5';
-      const lead = data.operation.leadTime || '12';
-      const oee = data.operation.oee || '58';
-      const sFreq = data.operation.setupFrequency || '5';
-      const sDur = data.operation.setupDuration || '45';
+      // Girilmemiş veri demo rakamla doldurulmaz: "Veri yok" yazılır
+      const op = data.operation;
+      const has = (v: any) => v !== undefined && v !== null && String(v).trim() !== '' && Number(String(v).replace(',', '.')) !== 0;
+      const pct = (v: any) => has(v) ? `%${v}` : 'Veri yok';
+      const unit = (v: any, u: string) => has(v) ? `${v} ${u}` : 'Veri yok';
 
       const rows = [
-        ['Toplam Ekipman Etkinliği (OEE)', '%85.0 (Dünya Klası)', `%${oee}.0`],
-        ['Hat / Proses Verimliliği', `%${pEff}.0`, `%${aEff}.0`],
-        ['Kalitesizlik Maliyet Oranı (COPQ)', '%2.5', `%${copq}`],
-        ['Iskarta / Hurda Oranı', '%0.5', `%${scrap}`],
-        ['Tamir / Rework Oranı', '%1.0', `%${rework}`],
-        ['Fazla Mesai Çalışma Oranı', '%3.0', `%${overtime}`],
-        ['Üretim Çevrim ve Akış Süresi (Lead Time)', '7 Gün', `${lead} Gün`],
-        ['Vardiya Başına Model Değişim (Setup) Sıklığı', '1-2 Değişim', `${sFreq} Setup`],
-        ['Ortalama Setup Duruş Süresi', '15 Dakika', `${sDur} Dakika`],
+        ['Toplam Ekipman Etkinliği (OEE)', '%85.0 (Dünya Klası)', has(op.oee) ? `%${op.oee}` : 'Ölçülmüyor'],
+        ['Hat / Proses Verimliliği', has(op.plannedEfficiency) ? `%${op.plannedEfficiency}` : '-', pct(op.actualEfficiency)],
+        ['Kalitesizlik Maliyet Oranı (COPQ)', '%2.5', pct(op.copqRate)],
+        ['Iskarta / Hurda Oranı', '%0.5', pct(op.scrapRate)],
+        ['Tamir / Rework Oranı', '%1.0', pct(op.reworkRate)],
+        ['Fazla Mesai Çalışma Oranı', '%3.0', pct(op.overtimeRate)],
+        ['Üretim Çevrim ve Akış Süresi (Lead Time)', '7 Gün', unit(op.leadTime, 'Gün')],
+        ['Vardiya Başına Model Değişim (Setup) Sıklığı', '1-2 Değişim', unit(op.setupFrequency, 'Setup')],
+        ['Ortalama Setup Duruş Süresi', '15 Dakika', unit(op.setupDuration, 'Dakika')],
         ['Aylık Brüt Operatör Maliyeti', '40.000 ₺', `${data.operation.grossLaborCost || '48.000'} ₺`]
       ];
 
@@ -469,7 +464,14 @@ Yalın dönüşüm araçlarının (SMED, 5S, TPM Otonom Bakım ve Poka-Yoke) ent
       doc.setFontSize(8.2);
       doc.setTextColor('#92400E');
       
-      const interpret = `Mevcut %${oee} OEE ve %${copq} Kalitesizlik Maliyeti (COPQ) değerleri, makine duruşlarının ve setup kayıplarının ciddi bir finansal israfa yol açtığını doğrulamaktadır. Iskartadaki her %1'lik artış, malzeme maliyet proportions ile birleşerek direkt ciro kaybı yaratmaktadır. Kurulum (setup) sürelerinin ${sDur} dakikanın üzerinde olması, verimsiz planlamanın birincil sebebidir.`;
+      // Yorum yalnızca girilmiş verilerden kurulur
+      const parts: string[] = [];
+      if (has(op.oee)) parts.push(`%${op.oee} OEE`);
+      if (has(op.copqRate)) parts.push(`%${op.copqRate} kalitesizlik maliyeti (COPQ)`);
+      const interpret = (parts.length
+        ? `Mevcut ${parts.join(' ve ')} değerleri, operasyonel kayıpların ciddi bir finansal israfa yol açtığını göstermektedir. `
+        : 'Operasyonel veriler kısmen ölçülebildiğinden yorum saha gözlemlerine dayanmaktadır. ')
+        + (has(op.setupDuration) ? `Kurulum (setup) sürelerinin ${op.setupDuration} dakika seviyesinde olması planlama esnekliğini sınırlamaktadır.` : '');
       
       const splitInterpret = doc.splitTextToSize(interpret, 170);
       doc.text(splitInterpret, 20, alertY + 12);

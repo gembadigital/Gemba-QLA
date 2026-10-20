@@ -23,6 +23,8 @@ export const ASSUMPTIONS = {
   oeeTarget: 85,
   /** OEE bileşenleri girildiğinde performans için dünya standardı */
   performanceTarget: 0.95,
+  /** Bu değerin altındaki ayrıştırılmış performans veri tutarsızlığına işaret eder */
+  minPlausiblePerformance: 0.75,
   /** Kayıp havuzu belirsizlik bandı (±) — QLA kabul edilen sapma */
   lossBand: 0.2,
   /** Tecrübe: benzer firmalarda toplam kayıp cironun %8–20'si arasında çıkar (referans, sınır değil) */
@@ -285,8 +287,7 @@ export function computeQla(input: QlaInput): QlaResult {
   const planned = pos(input.plannedEffPct);
   const actual = pos(input.actualEffPct);
   const effGap = planned > 0 && actual > 0 ? Math.max(0, (planned - actual) / planned) : 0;
-  add('iscilik', iscilik * effGap, effGap > 0 && iscilik > 0,
-    `İşçilik × (Planlanan %${planned} − Gerçekleşen %${actual}) / Planlanan`, 'Planlanan/gerçekleşen verimlilik');
+  // Satır, zaman kayıpları hesaplandıktan sonra eklenir (kapasiteyle örtüşen pay düşülür) — bkz. "İşçilik ↔ kapasite örtüşmesi"
   const inefficiencyHours = pos(input.operators) * A.hoursPerMonth * 12 * effGap;
 
   // 6–7) ZAMAN KAYIPLARI (setup, arıza, OEE performans)
@@ -350,6 +351,22 @@ export function computeQla(input: QlaInput): QlaResult {
     ? `Performans %${Math.round(performance * 1000) / 10} (OEE %${oee} / (K %${Math.round(availability * 100)} × Kalite %${Math.round(qualityRate * 100)})) → hedef %${A.performanceTarget * 100}`
     : `(Hedef OEE %${A.oeeTarget} − OEE %${oee}) / %${A.oeeTarget} − setup payı`, 'OEE');
 
+  // İşçilik ↔ kapasite örtüşmesi: aynı kayıp süre ya ek üretime (katkı payı, işçilik dahil) ya da işçilik tasarrufuna
+  // dönüşür, ikisine birden değil. Havuza giren ek çıktı f ise, aynı kadroyla f oranında fazla üretim
+  // f/(1+f) kadar işçilik verimliliği geri kazanımına eşittir → işçilik kaleminden düşülür.
+  const capacityOutputInPool = capScale * totalOutputFrac;
+  const laborOverlap = capacityOutputInPool / (1 + capacityOutputInPool);
+  const laborGapNet = Math.max(0, effGap - laborOverlap);
+  add('iscilik', iscilik * laborGapNet, effGap > 0 && iscilik > 0,
+    `İşçilik × (Planlanan %${planned} − Gerçekleşen %${actual}) / Planlanan` +
+      (laborOverlap > 0 ? ` − ilave kapasiteyle örtüşen %${Math.round(laborOverlap * 1000) / 10} (çifte sayım düşüldü)` : ''),
+    'Planlanan/gerçekleşen verimlilik');
+
+  // Tutarlılık: setup/arıza girildiğinde performans çok düşük çıkıyorsa veriler birbirini tutmuyor olabilir
+  if (decomposed && performance < A.minPlausiblePerformance) {
+    warnings.push(`Bilgi: OEE %${oee}, setup %${Math.round(setupShare * 1000) / 10} ve arıza %${Math.round(breakdownShare * 1000) / 10} ile performans %${Math.round(performance * 1000) / 10} çıkıyor (makineler normal hızın altında). Setup/arıza oranları eksik girilmiş ya da OEE düşük ölçülmüş olabilir — müşteriyle teyit edin.`);
+  }
+
   // Duruşlarda operatör zamanı — havuz dışı ek fırsat
   const laborDuringStops = setupLabor > 0 ? setupLabor + breakdownShare * iscilik : (setupShare + breakdownShare) * iscilik;
 
@@ -377,6 +394,8 @@ export function computeQla(input: QlaInput): QlaResult {
       : `(Malzeme + ½ (İşçilik + Enerji)) / ${A.calendarDaysPerYear} gün × Lead time ${lt} takvim günü × %${Math.round(carryingRate * 100)} taşıma`,
     'Lead time veya stok adedi');
 
+  const ORDER: LossKey[] = ['hurda', 'kalite', 'mesai', 'iscilik', 'durus', 'ariza', 'kapasite', 'stok'];
+  lines.sort((a, b) => ORDER.indexOf(a.key) - ORDER.indexOf(b.key));
   const lossByKey = Object.fromEntries(lines.map(l => [l.key, l.amount])) as Record<LossKey, number>;
   const totalLoss = lines.reduce((s, l) => s + l.amount, 0);
   if (input.costFromSector) warnings.push('Maliyet yapısı sektör ortalamasından alındı (müşteri verisi değil); toplantıda müşterinin kendi oranlarını teyit edin.');

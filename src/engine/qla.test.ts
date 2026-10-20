@@ -157,3 +157,24 @@ test('plan açığı varsa (talep kanıtı) ilave kapasite havuza girer, plan a�
   assert.ok(nearPlan.capacityUpside.inPool < demand.capacityUpside.inPool);
   assert.ok(nearPlan.capacityUpside.extraContribution > 0);
 });
+
+test('ilave kapasite havuza girince işçilik verimsizliğinden örtüşen pay düşülür', () => {
+  const common = { ...base, oeePct: 58, setupTimePct: 3, breakdownPct: 1, setupPerWeek: 0 };
+  const noDemand = computeQla(common);
+  const demand = computeQla({ ...common, planRealizationPct: 90 });
+  // talep yokken işçilik tam sayılır
+  assert.equal(noDemand.lossByKey.iscilik, Math.round(90_000_000 * 15 / 85));
+  // talep varken (kapasite havuzda) işçilik azalır, toplam yine de artar
+  assert.ok(demand.lossByKey.iscilik < noDemand.lossByKey.iscilik);
+  assert.ok(demand.losses.find(l => l.key === 'iscilik')!.formula.includes('çifte sayım'));
+  // plan açığı %11,1 → örtüşme 0,111/1,111 = %10 → verimlilik açığı %17,6 − %10
+  const gap = 15 / 85 - (1 / 0.9 - 1) / (1 / 0.9);
+  assert.equal(demand.lossByKey.iscilik, Math.round(90_000_000 * gap));
+});
+
+test('OEE ile setup/arıza tutarsızsa (performans < %75) bilgi notu verilir', () => {
+  const q = computeQla({ ...base, oeePct: 58, setupTimePct: 3, breakdownPct: 1, setupPerWeek: 0 });
+  assert.ok(q.warnings.some(w => w.includes('performans %') && w.includes('teyit')));
+  const ok = computeQla({ ...base, oeePct: 62, setupTimePct: 12, breakdownPct: 8, scrapPct: 10, reworkPct: 8, setupPerWeek: 0 });
+  assert.ok(!ok.warnings.some(w => w.includes('normal hızın altında')));
+});

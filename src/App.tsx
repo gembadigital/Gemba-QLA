@@ -54,7 +54,7 @@ import SahaBulgulariPanel from './components/SahaBulgulariPanel';
 import { ExportService } from './services/pdf';
 import LoginPage from './components/LoginPage';
 import { CRITERIA } from './data/criteria';
-import { computeQla, LossKey, QlaInput, normalizeTr } from './engine/qla';
+import { computeQla, applySuccessRate, LossKey, QlaInput, normalizeTr } from './engine/qla';
 
 const appLogo = "/gemba_digital_logo.png";
 
@@ -339,6 +339,7 @@ export default function App() {
       setSustainYears(Number(details.operation.sustainYears) || 3);
       setSelectedPackageId(details.operation.selectedPackageId || undefined);
       setUrunGrubuEnCok(details.operation.urunGrubuEnCok || '');
+      setSuccessRatePct(Number(details.operation.successRatePct) || 100);
       setUrunGrubuAdet(details.operation.urunGrubuAdet || '');
       setUrunGrubuOran(details.operation.urunGrubuOran || '');
       setUseProductFamilyCost(!!details.operation.useProductFamilyCost);
@@ -378,6 +379,7 @@ export default function App() {
       setChatMessages([]);
       setSelectedPackageId(undefined);
       setUrunGrubuEnCok('');
+      setSuccessRatePct(100);
       setUrunGrubuAdet('');
       setUrunGrubuOran('');
       setUseProductFamilyCost(false);
@@ -541,6 +543,7 @@ export default function App() {
 
   // Ürün ailesi alanları firma kaydında saklanır (loadCompany ile yüklenir, performSave ile kaydedilir)
   const [urunGrubuEnCok, setUrunGrubuEnCok] = useState('');
+  const [successRatePct, setSuccessRatePct] = useState<number>(100);
   const [urunGrubuAdet, setUrunGrubuAdet] = useState('');
   const [urunGrubuOran, setUrunGrubuOran] = useState('');
   const [useProductFamilyCost, setUseProductFamilyCost] = useState(false);
@@ -1385,6 +1388,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
         planRealizationPct,
         sustainYears: String(sustainYears),
         selectedPackageId: selectedPackageId ?? '',
+        successRatePct,
         urunGrubuEnCok,
         urunGrubuAdet,
         urunGrubuOran,
@@ -1493,7 +1497,7 @@ Eğer belirtilen sektöre özel yeterli ve doğrulanabilir bilgiye sahip değils
     wizardGrossSalary, wizardSgkRate, wizardYemek, wizardServis, wizardSeveranceRate, wizardLeaveRate, wizardSideBenefits,
     costPropMaterial, costPropLabor, costPropEnergy, costPropMaintenance, costPropOverhead, costPropProfit,
     consultant, scores, chatMessages, totalScore, total_economic_max, totalOp1Lira, setupLaborLoss, inefficiencyLaborLoss, totalLossExpected, eurTry, usdTry,
-    selectedPackageId, urunGrubuEnCok, urunGrubuAdet, urunGrubuOran, useProductFamilyCost, useProductFamilyRecovery
+    selectedPackageId, successRatePct, urunGrubuEnCok, urunGrubuAdet, urunGrubuOran, useProductFamilyCost, useProductFamilyRecovery
   ]);
 
   const copyToClipboard = () => {
@@ -1565,7 +1569,8 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
     try {
       // Rapordaki tüm rakamlar ekrandaki hesapla aynı kaynaktan gelir
       await ExportService.exportCompanyReport(currentCompanyId, {
-        qla,
+        // Rapor, danışmanın ROI ekranındaki başarı oranı senaryosunu kullanır
+        qla: applySuccessRate(qla, successRatePct / 100),
         currency,
         turnover: currentCostTurnoverBase,
         profitPct: parseFloat(String(costPropProfit).replace(',', '.')) || 0,
@@ -3961,6 +3966,8 @@ AÇIKLAMALAR & SÖZLEŞME NOTLARI:
             op4_max={op4_max}
             qla={qla}
             setSelectedPackageId={setSelectedPackageId}
+            successRatePct={successRatePct}
+            setSuccessRatePct={setSuccessRatePct}
             sustainYears={sustainYears}
             setSustainYears={setSustainYears}
             pitchFindings={getDynamicGembaFindings().slice(0, 3)}

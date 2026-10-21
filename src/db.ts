@@ -30,6 +30,8 @@ export interface OperationData {
   currency?: string;
   /** Danışmanın ROI için seçtiği paket ('' = sistemin önerisi) */
   selectedPackageId?: string;
+  /** ROI başarı oranı senaryosu (%, 100 = tam) */
+  successRatePct?: number;
   /** En çok üretilen ürün ailesi (ilk yıl odak) */
   urunGrubuEnCok?: string;
   urunGrubuAdet?: string;
@@ -792,6 +794,7 @@ export const GembaDB = {
         planRealizationPct: operationFields.planRealizationPct ?? existingOp?.planRealizationPct ?? '',
         sustainYears: operationFields.sustainYears ?? existingOp?.sustainYears ?? '3',
         selectedPackageId: operationFields.selectedPackageId ?? existingOp?.selectedPackageId ?? '',
+        successRatePct: operationFields.successRatePct ?? existingOp?.successRatePct ?? 100,
         urunGrubuEnCok: operationFields.urunGrubuEnCok ?? existingOp?.urunGrubuEnCok ?? '',
         urunGrubuAdet: operationFields.urunGrubuAdet ?? existingOp?.urunGrubuAdet ?? '',
         urunGrubuOran: operationFields.urunGrubuOran ?? existingOp?.urunGrubuOran ?? '',

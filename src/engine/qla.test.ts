@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeQla, QlaInput, normalizeTr, splitGain } from './qla.ts';
+import { computeQla, QlaInput, normalizeTr, splitGain, applySuccessRate } from './qla.ts';
 
 const base: QlaInput = {
   turnover: 500_000_000,
@@ -216,4 +216,15 @@ test('kazanç katmanları toplamı paket kazancına eşittir; talep varsa ek sat
   // Talep kanıtı yoksa (plan gerçekleşme girilmemiş) ek satış katmanı oluşmaz
   const q2 = computeQla({ ...base, setupTimePct: 8, breakdownPct: 5 } as QlaInput);
   assert.equal(splitGain(q2).sales.mid, 0);
+});
+
+test('başarı oranı tüm kazançları ölçekler, geri ödemeyi uzatır', () => {
+  const q = computeQla({ ...base, selectedPackageId: 'standart' });
+  const a = applySuccessRate(q, 0.8);
+  assert.equal(a.selected.def.id, 'standart');
+  assert.ok(Math.abs(a.selected.gainMid - q.selected.gainMid * 0.8) <= 1);
+  assert.ok(a.selected.paybackExpMonths > q.selected.paybackExpMonths);
+  const oppSum = a.opportunities.reduce((s, o) => s + o.gainMax, 0);
+  assert.ok(Math.abs(oppSum - a.selected.gainMax) <= 10);
+  assert.equal(applySuccessRate(q, 1), q);
 });

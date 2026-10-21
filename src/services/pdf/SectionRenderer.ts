@@ -184,7 +184,7 @@ export class SectionRenderer {
     card(c, R, 42, RW, 60);
     label(c, 'Tek bakışta', R + 5, 49);
     const facts: [string, string][] = rec ? [
-      [`${rec.def.name}`, `${rec.def.days} adam-gün · bütçe ${moneyShort(rec.budget, unit)}`],
+      [`${rec.def.name}`, `${rec.def.days} adam-gün · bütçe ${moneyShort(rec.budget, unit)}${q!.successRate ? ` · %${Math.round(q!.successRate * 100)} başarı senaryosu` : ''}`],
       [`${fmtNum(rec.paybackExpMonths)} ay`, 'beklenen geri ödeme süresi'],
       [`${fmtNum(rec.budget > 0 ? rec.year1Gain / rec.budget : 0)}x`, '1. yıl kazanç / yatırım (ROI)'],
       [`${q!.losses.filter(l => l.hasData).length} / ${q!.losses.length}`, 'kayıp kalemi veriyle hesaplandı'],
@@ -254,7 +254,7 @@ export class SectionRenderer {
 
     // Sol üst: kazancın katmanları (ilk ikisi faaliyet kârına dahil)
     card(c, L, 42, LW, 80);
-    label(c, `Kazanç nereden gelir? — ${rec.def.name}, yıllık beklenen`, L + 5, 49);
+    label(c, `Kazanç nereden gelir? — ${rec.def.name}, yıllık beklenen${q.successRate ? ` · %${Math.round(q.successRate * 100)} başarı senaryosu` : ''}`, L + 5, 49);
     const layers = [
       { k: g.cost, color: COLOR.red, inProfit: true, tag: 'KÂRA DAHİL', t: 'Maliyet düşüşü', d: 'Hurda, yeniden işleme, fazla mesai, duruşların enerji/bakım maliyeti azalır.' },
       { k: g.sales, color: '#E05257', inProfit: true, tag: 'KÂRA DAHİL', t: 'Ek satış katkısı',

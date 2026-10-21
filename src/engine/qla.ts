@@ -243,6 +243,8 @@ export interface QlaResult {
   /** Önerilen paketin geri ödemesi uzunsa, makul geri ödemeli en büyük küçük paket */
   affordableAlternative?: PackageResult;
   warnings: string[];
+  /** applySuccessRate ile ölçeklendiyse uygulanan başarı oranı (0–1) */
+  successRate?: number;
 }
 
 const r = (n: number) => Math.round(n);
@@ -590,6 +592,37 @@ export function splitGain(q: QlaResult, pkg: PackageResult = q.recommended): Gai
     extraRevenue: contribution > 0 ? r(sales.mid / contribution) : 0,
     oneTimeCash: pkg.cashRelease,
     total: { min: pkg.gainMin, mid: pkg.gainMid, max: pkg.gainMax },
+  };
+}
+
+/** Danışmanın başarı oranı senaryosu: tüm paket kazançları ve fırsatlar oranla ölçeklenir,
+ *  geri ödeme ve ROI yeniden hesaplanır. Oran ≥ 1 ise sonuç aynen döner. */
+export function applySuccessRate(q: QlaResult, rate: number): QlaResult {
+  if (!(rate > 0) || rate >= 1) return q;
+  const scalePkg = (p: PackageResult): PackageResult => {
+    const gainMin = r(p.gainMin * rate), gainMax = r(p.gainMax * rate), gainMid = r(p.gainMid * rate);
+    const year1Gain = r(p.year1Gain * rate), cumulativeGain = r(p.cumulativeGain * rate);
+    return {
+      ...p, gainMin, gainMax, gainMid, year1Gain, cumulativeGain,
+      paybackFastMonths: payback(p.budget, gainMax),
+      paybackExpMonths: payback(p.budget, gainMid),
+      paybackSlowMonths: payback(p.budget, gainMin),
+      roiMultiple: p.budget > 0 ? Math.round(cumulativeGain / p.budget * 10) / 10 : 0,
+    };
+  };
+  const packages = q.packages.map(scalePkg);
+  const byId = (p: PackageResult) => packages.find(x => x.def.id === p.def.id) ?? scalePkg(p);
+  const selected = byId(q.selected);
+  const { curve: breakEven, month: breakEvenMonth } = breakEvenCurve(selected.budget, selected.gainMid);
+  return {
+    ...q,
+    packages,
+    recommended: byId(q.recommended),
+    selected,
+    affordableAlternative: q.affordableAlternative ? byId(q.affordableAlternative) : undefined,
+    opportunities: q.opportunities.map(o => ({ ...o, gainMin: r(o.gainMin * rate), gainMax: r(o.gainMax * rate) })),
+    breakEven, breakEvenMonth,
+    successRate: rate,
   };
 }
 

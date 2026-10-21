@@ -64,6 +64,9 @@ export interface RoiAnalyzerProps {
   op4_max: number;
   qla: QlaResult;
   setSelectedPackageId?: (id: string) => void;
+  /** Başarı oranı senaryosu (%) — App'te firma kaydıyla saklanır, rapora da uygulanır */
+  successRatePct?: number;
+  setSuccessRatePct?: (n: number) => void;
   sustainYears?: number;
   setSustainYears?: (n: number) => void;
   pitchFindings?: PitchFinding[];
@@ -371,6 +374,8 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   op4_max,
   qla,
   setSelectedPackageId,
+  successRatePct: successRatePctProp,
+  setSuccessRatePct: setSuccessRatePctProp,
   sustainYears = 3,
   setSustainYears,
   pitchFindings = [],
@@ -516,7 +521,9 @@ export const RoiAnalyzer: React.FC<RoiAnalyzerProps> = ({
   const [isDashboardExpanded, setIsDashboardExpanded] = React.useState(false);
   const [isFormulasExpanded, setIsFormulasExpanded] = React.useState(false);
   const [isMatrixExpanded, setIsMatrixExpanded] = React.useState(false);
-  const [successRatePct, setSuccessRatePct] = React.useState<number>(100);
+  const [localSuccessRate, setLocalSuccessRate] = React.useState<number>(100);
+  const successRatePct = successRatePctProp ?? localSuccessRate;
+  const setSuccessRatePct = setSuccessRatePctProp ?? setLocalSuccessRate;
   const [isExecutivePitchOpen, setIsExecutivePitchOpen] = React.useState<boolean>(false);
 
   // Active Live Exchange Rate

@@ -204,11 +204,16 @@ test('kayıp cironun yarısını aşarsa ilk uyarı veri hatasıdır', () => {
   assert.ok(q.warnings[0].startsWith('UYARI'));
 });
 
-test('kazanç katmanları toplamı paket kazancına eşittir; stok finansman katmanındadır', () => {
+test('kazanç katmanları toplamı paket kazancına eşittir; talep varsa ek satış kâra dahildir', () => {
   const q = computeQla({ ...base, stockValue: 20_000_000, planRealizationPct: 80, setupTimePct: 8, breakdownPct: 5 } as QlaInput);
   const g = splitGain(q);
-  const sum = g.profit.mid + g.capacity.mid + g.finance.mid;
-  assert.ok(Math.abs(sum - q.recommended.gainMid) <= 3, `${sum} ≠ ${q.recommended.gainMid}`);
-  assert.ok(g.finance.mid > 0 && g.profit.mid > 0 && g.capacity.mid > 0);
+  const sum = g.cost.mid + g.sales.mid + g.efficiency.mid + g.finance.mid;
+  assert.ok(Math.abs(sum - q.recommended.gainMid) <= 4, `${sum} ≠ ${q.recommended.gainMid}`);
+  assert.ok(g.finance.mid > 0 && g.cost.mid > 0 && g.sales.mid > 0);
+  assert.ok(Math.abs(g.profitImpact.mid - g.cost.mid - g.sales.mid) <= 2);
+  assert.ok(g.extraRevenue > g.sales.mid);
   assert.equal(g.oneTimeCash, q.recommended.cashRelease);
+  // Talep kanıtı yoksa (plan gerçekleşme girilmemiş) ek satış katmanı oluşmaz
+  const q2 = computeQla({ ...base, setupTimePct: 8, breakdownPct: 5 } as QlaInput);
+  assert.equal(splitGain(q2).sales.mid, 0);
 });

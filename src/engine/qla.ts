@@ -542,40 +542,52 @@ export function computeQla(input: QlaInput): QlaResult {
 }
 
 /** Kazancın finansal katmanları — yönetici (CFO) bakışı:
- *  - profit: doğrudan faaliyet kârına iner (hurda, rework, fazla mesai, duruşların enerji/bakım payı)
- *  - capacity: açılan kapasite ve işgücü verimi; ancak satılır ya da ek işe alım önlenirse kâra döner
+ *  - cost: maliyet düşüşü — hurda, rework, fazla mesai, duruşların enerji/bakım payı (doğrudan kâra iner)
+ *  - sales: ek satış katkısı — duruş/OEE kayıplarından açılan kapasite. Motor bunu yalnızca talep kanıtı
+ *    varsa (plan gerçekleşme < %100) ve plan açığı kadar sayar; planlanıp üretilemeyen sipariş üretilir,
+ *    katkı payıyla kâra iner
+ *  - efficiency: işçilik verimi — ek işe alımı önlediği / kadro büyümeyi karşıladığı ölçüde kâra döner
  *  - finance: stok taşıma maliyeti (finansman, depolama); ayrıca bir kerelik nakit serbest kalır
+ *  profitImpact = cost + sales (faaliyet kârına etki). extraRevenue: ek satışın ciro karşılığı.
  *  Kalem payları qla.opportunities'ten (kazanç dağılımı) alınır, paketin aralığına ölçeklenir. */
 export interface GainLayer { min: number; mid: number; max: number }
 export interface GainSplit {
-  profit: GainLayer;
-  capacity: GainLayer;
+  cost: GainLayer;
+  sales: GainLayer;
+  efficiency: GainLayer;
   finance: GainLayer;
+  profitImpact: GainLayer;
+  extraRevenue: number;
   oneTimeCash: number;
   total: GainLayer;
 }
 
 export function splitGain(q: QlaResult, pkg: PackageResult = q.recommended): GainSplit {
   const base = q.opportunities.reduce((acc, o) => acc + o.gainMin + o.gainMax, 0);
-  const layers = { profit: 0, capacity: 0, finance: 0 };
+  const f = { cost: 0, sales: 0, efficiency: 0, finance: 0 };
   if (base > 0) {
     q.opportunities.forEach(o => {
       const share = (o.gainMin + o.gainMax) / base;
-      if (o.key === 'stok') layers.finance += share;
-      else if (o.key === 'iscilik') layers.capacity += share;
+      if (o.key === 'stok') f.finance += share;
+      else if (o.key === 'iscilik') f.efficiency += share;
       else {
         const cap = q.capacityLines.find(cl => cl.key === o.key);
         const capFrac = cap && o.loss > 0 ? Math.min(1, cap.inPool / o.loss) : 0;
-        layers.capacity += share * capFrac;
-        layers.profit += share * (1 - capFrac);
+        f.sales += share * capFrac;
+        f.cost += share * (1 - capFrac);
       }
     });
   }
-  const layer = (f: number): GainLayer => ({ min: r(pkg.gainMin * f), mid: r(pkg.gainMid * f), max: r(pkg.gainMax * f) });
+  const layer = (x: number): GainLayer => ({ min: r(pkg.gainMin * x), mid: r(pkg.gainMid * x), max: r(pkg.gainMax * x) });
+  const sales = layer(f.sales);
+  const contribution = q.capacityUpside.contributionPct / 100;
   return {
-    profit: layer(layers.profit),
-    capacity: layer(layers.capacity),
-    finance: layer(layers.finance),
+    cost: layer(f.cost),
+    sales,
+    efficiency: layer(f.efficiency),
+    finance: layer(f.finance),
+    profitImpact: layer(f.cost + f.sales),
+    extraRevenue: contribution > 0 ? r(sales.mid / contribution) : 0,
     oneTimeCash: pkg.cashRelease,
     total: { min: pkg.gainMin, mid: pkg.gainMid, max: pkg.gainMax },
   };

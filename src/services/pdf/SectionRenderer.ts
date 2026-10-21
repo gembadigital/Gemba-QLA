@@ -233,31 +233,38 @@ export class SectionRenderer {
     const g = splitGain(q, rec);
     const turnover = m.turnover > 0 ? m.turnover : 0;
     const margin = m.profitPct && m.profitPct > 0 ? m.profitPct : 0;
-    const upliftPts = turnover > 0 ? g.profit.mid / turnover * 100 : 0;
+    const profit = g.profitImpact.mid;
+    // Yeni marj: (bugünkü kâr + kâr etkisi) / (ciro + ek satış cirosu)
+    const newMargin = turnover > 0 && margin > 0 ? (turnover * margin / 100 + profit) / (turnover + g.extraRevenue) * 100 : 0;
+    const upliftPts = newMargin - margin;
     const months = (gain: number) => (gain > 0 ? rec.budget / gain * 12 : 0);
-    const pbProfit = months(g.profit.mid);
+    const pbProfit = months(profit);
+    const pbCost = months(g.cost.mid);
+    const planPct = num(d.operation.planRealizationPct);
 
     headline(c, margin > 0 && upliftPts > 0 ? [
-      { t: 'Yalın dönüşüm faaliyet kârını yılda ' }, { t: moneyShort(g.profit.mid, unit), red: true },
-      { t: ` doğrudan artırır; kâr marjı %${fmtNum(margin + upliftPts)} olur (bugün %${fmtNum(margin)}).` },
+      { t: 'Yalın dönüşüm faaliyet kârını yılda ' }, { t: moneyShort(profit, unit), red: true },
+      { t: ` artırır; kâr marjı %${fmtNum(newMargin)} olur (bugün %${fmtNum(margin)}).` },
     ] : [
-      { t: 'Yalın dönüşüm faaliyet kârına yılda ' }, { t: `${moneyShort(g.profit.mid, unit)} doğrudan katkı`, red: true },
+      { t: 'Yalın dönüşüm faaliyet kârına yılda ' }, { t: `${moneyShort(profit, unit)} katkı`, red: true },
       { t: ` sağlar; toplam beklenen kazanç ${moneyShort(g.total.mid, unit)}.` },
     ]);
 
     const L = PAGE.mx, LW = 160, R = L + LW + 5, RW = CW - LW - 5;
 
-    // Sol üst: kazancın üç katmanı
-    card(c, L, 42, LW, 74);
+    // Sol üst: kazancın katmanları (ilk ikisi faaliyet kârına dahil)
+    card(c, L, 42, LW, 80);
     label(c, `Kazanç nereden gelir? — ${rec.def.name}, yıllık beklenen`, L + 5, 49);
     const layers = [
-      { k: g.profit, color: COLOR.red, t: 'Doğrudan kâr etkisi', d: 'Hurda, yeniden işleme, fazla mesai ve duruşların enerji/bakım maliyeti düşer. Gelir tablosuna doğrudan iner.' },
-      { k: g.capacity, color: COLOR.ink, t: 'Kapasite kazancı', d: 'Aynı kadro ve makineyle daha fazla üretim. Satılabildiği ya da ek işe alımı önlediği ölçüde kâra döner.' },
-      { k: g.finance, color: COLOR.good, t: 'Finansman yükü', d: 'Daha az stok: finansman ve depolama maliyeti azalır.' },
-    ];
+      { k: g.cost, color: COLOR.red, inProfit: true, tag: 'KÂRA DAHİL', t: 'Maliyet düşüşü', d: 'Hurda, yeniden işleme, fazla mesai, duruşların enerji/bakım maliyeti azalır.' },
+      { k: g.sales, color: '#E05257', inProfit: true, tag: 'KÂRA DAHİL', t: 'Ek satış katkısı',
+        d: `Setup, arıza ve OEE kayıplarından açılan kapasite planlanıp üretilemeyen siparişi karşılar${planPct > 0 ? ` (plan gerçekleşme %${tr(d.operation.planRealizationPct)})` : ''}; ${moneyShort(g.extraRevenue, unit)} ek ciro, katkı payıyla kâra iner.` },
+      { k: g.efficiency, color: COLOR.ink, inProfit: false, tag: 'KOŞULLU', t: 'İşgücü verimi', d: 'Aynı iş daha az işçilik saatiyle; ek işe alımı önlediği ölçüde kâra döner.' },
+      { k: g.finance, color: COLOR.good, inProfit: false, tag: 'FİNANSMAN', t: 'Finansman yükü', d: 'Daha az stok: finansman ve depolama maliyeti azalır.' },
+    ].filter(x => x.k.mid > 0);
     const barX = L + 5, barW = LW - 10, barY = 53;
     let bx = barX;
-    const tot = layers.reduce((s, x) => s + x.k.mid, 0) || 1;
+    const tot = layers.reduce((acc, x) => acc + x.k.mid, 0) || 1;
     layers.forEach(x => {
       const w = barW * x.k.mid / tot;
       if (w > 0) { doc.setFillColor(x.color); doc.rect(bx, barY, w, 4, 'F'); bx += w; }
@@ -266,28 +273,31 @@ export class SectionRenderer {
     layers.forEach(x => {
       doc.setFillColor(x.color); doc.rect(L + 5, ly - 3, 3, 3, 'F');
       setText(c, 9, COLOR.ink, true); doc.text(x.t, L + 10, ly);
+      const tw = doc.getTextWidth(x.t);
+      setText(c, 6.6, x.inProfit ? COLOR.red : COLOR.muted, true);
+      doc.text(x.tag, L + 12 + tw, ly);
       setText(c, 11, COLOR.ink, true); doc.text(moneyShort(x.k.mid, unit), L + LW - 5, ly, { align: 'right' });
       setText(c, 6.8, COLOR.muted); doc.text(`aralık ${moneyShort(x.k.min, unit)} – ${moneyShort(x.k.max, unit)}`, L + LW - 5, ly + 3.8, { align: 'right' });
-      para(c, x.d, L + 10, ly + 3.8, LW - 60, 7.2, COLOR.muted, 1.3);
-      ly += 13;
+      const e = para(c, x.d, L + 10, ly + 3.8, LW - 60, 7.2, COLOR.muted, 1.3);
+      ly = Math.max(ly + 11, e + 4.2);
     });
     if (g.oneTimeCash > 0) {
-      para(c, `Ayrıca stok düşüşüyle bir kerelik ${moneyShort(g.oneTimeCash, unit)} nakit (işletme sermayesi) serbest kalır — yıllık kazanca dahil değildir.`, L + 5, ly + 1, LW - 10, 7.4, COLOR.ink, 1.3, true);
+      para(c, `Ayrıca stok düşüşüyle bir kerelik ${moneyShort(g.oneTimeCash, unit)} nakit (işletme sermayesi) serbest kalır — yıllık kazanca dahil değildir.`, L + 5, Math.min(ly + 1, 117), LW - 10, 7.2, COLOR.ink, 1.3, true);
     }
 
     // Sol alt-1: kâr marjı (koyu kart)
-    const by = 120, bh = 70, mw = 70;
+    const by = 126, bh = 64, mw = 70;
     card(c, L, by, mw, bh, COLOR.ink);
     label(c, 'Kâr marjına etkisi', L + 5, by + 7, '#AFB7C2');
-    if (margin > 0) {
-      setText(c, 20, COLOR.white, true); doc.text(`+${fmtNum(upliftPts)} puan`, L + 5, by + 20);
-      setText(c, 7.6, '#C9CFD8'); doc.text(`faaliyet kâr marjı: bugün %${fmtNum(margin)}, sonra %${fmtNum(margin + upliftPts)}`, L + 5, by + 25.5);
-      const salesEq = g.profit.mid / (margin / 100);
-      setText(c, 14, COLOR.white, true); doc.text(moneyShort(salesEq, unit), L + 5, by + 40);
-      para(c, `Aynı kârı satışla yaratmak için gereken ek ciro. %${fmtNum(margin)} marjda 1 ${unit} tasarruf ≈ ${fmtNum(100 / margin)} ${unit} satış.`, L + 5, by + 45.5, mw - 10, 7.2, '#C9CFD8', 1.3);
+    if (margin > 0 && turnover > 0) {
+      setText(c, 20, COLOR.white, true); doc.text(`+${fmtNum(upliftPts)} puan`, L + 5, by + 19);
+      setText(c, 7.6, '#C9CFD8'); doc.text(`faaliyet kâr marjı: bugün %${fmtNum(margin)}, sonra %${fmtNum(newMargin)}`, L + 5, by + 24.5);
+      const salesEq = profit / (margin / 100);
+      setText(c, 14, COLOR.white, true); doc.text(moneyShort(salesEq, unit), L + 5, by + 37);
+      para(c, `Aynı kârı bugünkü %${fmtNum(margin)} marjla satış büyümesiyle yaratmak için gereken ek ciro. Maliyetten kazanılan 1 ${unit} ≈ ${fmtNum(100 / margin)} ${unit} satış.`, L + 5, by + 42.5, mw - 10, 7.2, '#C9CFD8', 1.3);
     } else {
-      setText(c, 20, COLOR.white, true); doc.text(moneyShort(g.profit.mid, unit), L + 5, by + 20);
-      para(c, 'yıllık doğrudan kâr katkısı. Maliyet yapısında kâr payı girilirse marj etkisi ve satış eşdeğeri hesaplanır.', L + 5, by + 26, mw - 10, 7.4, '#C9CFD8', 1.3);
+      setText(c, 20, COLOR.white, true); doc.text(moneyShort(profit, unit), L + 5, by + 19);
+      para(c, 'yıllık faaliyet kârı etkisi. Maliyet yapısında kâr payı girilirse marj etkisi ve satış eşdeğeri hesaplanır.', L + 5, by + 25, mw - 10, 7.4, '#C9CFD8', 1.3);
     }
 
     // Sol alt-2: duyarlılık
@@ -313,16 +323,20 @@ export class SectionRenderer {
     const lo = Math.round(rec.def.recovery[0] * 100), hi = Math.round(rec.def.recovery[1] * 100);
     const args: [string, string][] = [
       ['Yatırım kârdan geri döner',
-        pbProfit > 0 && pbProfit <= 24
-          ? `Kapasite ve stok kazancı hiç sayılmasa bile, yalnızca doğrudan kâr etkisiyle ${moneyShort(rec.budget, unit)} bütçe ${fmtNum(pbProfit)} ayda geri döner.`
-          : `Toplam beklenen kazançla ${moneyShort(rec.budget, unit)} bütçe ${fmtNum(rec.paybackExpMonths)} ayda geri döner; doğrudan kâr etkisi yılda ${moneyShort(g.profit.mid, unit)}.`],
-      ['Başa baş için küçük bir iyileşme yeterli',
-        `Programın 12 ayda kendini ödemesi için kaybın yalnızca ${pctOf(bePct, 'ini')} geri kazanmak yeterli. Plan hedefi %${lo}–${hi}.`],
+        pbCost > 0 && pbCost <= 12
+          ? `Ek satış hiç gerçekleşmese bile, yalnızca maliyet düşüşüyle ${moneyShort(rec.budget, unit)} bütçe ${fmtNum(pbCost)} ayda geri döner.`
+          : pbProfit > 0
+            ? `Faaliyet kârına etkisiyle ${moneyShort(rec.budget, unit)} bütçe ${fmtNum(pbProfit)} ayda geri döner${pbCost > 0 && pbCost <= 36 ? `; ek satış hiç gerçekleşmese bile yalnızca maliyet düşüşü ${fmtNum(pbCost)} ayda öder` : ''}.`
+            : `Toplam beklenen kazançla ${moneyShort(rec.budget, unit)} bütçe ${fmtNum(rec.paybackExpMonths)} ayda geri döner.`],
+      g.sales.mid > g.cost.mid
+        ? ['Talep hazır, kayıp kapasitede', `Plan gerçekleşmesi %${tr(d.operation.planRealizationPct)}: siparişler var, üretilemiyor. Duruş ve OEE kayıplarını geri almak yeni yatırım ve kadro olmadan ${moneyShort(g.extraRevenue, unit)} ek satış demektir.`]
+        : ['Başa baş için küçük bir iyileşme yeterli',
+          `Programın 12 ayda kendini ödemesi için kaybın yalnızca ${pctOf(bePct, 'ini')} geri kazanmak yeterli. Plan hedefi %${lo}–${hi}.`],
       margin > 0
         ? ['Tasarruf, satıştan değerlidir', `%${fmtNum(margin)} kâr marjında maliyetten kazanılan her 1 ${unit}, yaklaşık ${fmtNum(100 / margin)} ${unit} ek satışa eşdeğer — üstelik pazar riski taşımaz.`]
         : ['Tasarruf, satıştan değerlidir', 'Maliyetten kazanılan her lira doğrudan kâra iner; aynı kârı satışla yaratmak çok daha fazla ciro ve pazar riski gerektirir.'],
       ['Hedef temkinli, rakamlar abartılı değil',
-        `Kayıp havuzu cironun ${pctOf(q.lossPctOfTurnover)} (sektörde tipik %8–20). Hedef bunun yalnızca ${iyelik(`%${lo}–${hi}`)}; bu aralığın alt ucunda bile geri ödeme ${fmtNum(rec.paybackSlowMonths)} ay.`],
+        `Kayıp havuzu cironun ${pctOf(q.lossPctOfTurnover)} (${q.lossPctOfTurnover > 20 ? 'tipik %8–20 aralığının üstünde; ilk iki haftada doğrulanır' : 'sektörde tipik %8–20'}). Hedef bunun yalnızca ${iyelik(`%${lo}–${hi}`)}; bu aralığın alt ucunda bile geri ödeme ${fmtNum(rec.paybackSlowMonths)} ay.`],
       ['Ölçülebilir, karar sizde',
         'İlk iki haftada başlangıç değerleri sizin verinizle doğrulanır; kazanç aylık KPI (hurda, OEE, stok günü, fazla mesai) ile izlenir. Her aşamada devam kararı yönetimdedir.'],
     ];
